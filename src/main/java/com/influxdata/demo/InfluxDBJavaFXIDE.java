@@ -211,7 +211,7 @@ public class InfluxDBJavaFXIDE extends Application {
             // Test connection
             CompletableFuture.supplyAsync(() -> {
                 try {
-                    return executeQueryHTTP(testHost, testToken, testDatabase, "SHOW TABLES");
+                    return executeQueryHTTP(testHost, testToken, testDatabase, "SHOW MEASUREMENTS");
                 } catch (Exception ex) {
                     return "Error: " + ex.getMessage();
                 }
@@ -448,7 +448,7 @@ public class InfluxDBJavaFXIDE extends Application {
         // Database Menu
         Menu databaseMenu = new Menu("Database");
         
-        MenuItem showTablesItem = new MenuItem("Show Tables");
+        MenuItem showTablesItem = new MenuItem("Show Measurements");
         showTablesItem.setOnAction(e -> {
             queryArea.setText("SHOW MEASUREMENTS");
             executeQuery();
@@ -658,6 +658,20 @@ public class InfluxDBJavaFXIDE extends Application {
 
     private void displayResultsInTable(String jsonResult) {
         try {
+            // Check if response starts with ERROR
+            if (jsonResult.startsWith("ERROR")) {
+                System.err.println("HTTP Error response: " + jsonResult);
+                // Show error in raw results area
+                rawResultArea.setText("HTTP Error: " + jsonResult);
+                // Clear table
+                resultsTable.getColumns().clear();
+                resultsTable.getItems().clear();
+                return;
+            }
+            
+            // Debug: log the response
+            System.out.println("Raw response: " + jsonResult.substring(0, Math.min(200, jsonResult.length())));
+            
             // Parse JSON response
             JSONObject json = new JSONObject(jsonResult);
             JSONArray results = json.getJSONArray("results");
@@ -670,6 +684,17 @@ public class InfluxDBJavaFXIDE extends Application {
                     
                     if (series.length() > 0) {
                         JSONObject firstSeries = series.getJSONObject(0);
+                        
+                        // Check if series has error
+                        if (firstSeries.has("error")) {
+                            String errorMsg = firstSeries.getString("error");
+                            System.err.println("Series error: " + errorMsg);
+                            rawResultArea.setText("Query Error: " + errorMsg);
+                            resultsTable.getColumns().clear();
+                            resultsTable.getItems().clear();
+                            return;
+                        }
+                        
                         JSONArray columns = firstSeries.getJSONArray("columns");
                         JSONArray values = firstSeries.getJSONArray("values");
                         
@@ -724,11 +749,40 @@ public class InfluxDBJavaFXIDE extends Application {
                         
                         // Switch to table tab
                         resultsTabPane.getSelectionModel().select(0);
+                    } else {
+                        // No series - this can happen with some queries like SHOW MEASUREMENTS
+                        System.out.println("No series in result - query may have returned no data");
+                        rawResultArea.setText("Query executed successfully but returned no data.\n\nRaw response:\n" + jsonResult);
+                        resultsTable.getColumns().clear();
+                        resultsTable.getItems().clear();
+                    }
+                } else {
+                    // No series field - check if there's an error message
+                    if (firstResult.has("error")) {
+                        String errorMsg = firstResult.getString("error");
+                        System.err.println("Result error: " + errorMsg);
+                        rawResultArea.setText("Query Error: " + errorMsg);
+                        resultsTable.getColumns().clear();
+                        resultsTable.getItems().clear();
+                    } else {
+                        System.out.println("No series field in result");
+                        rawResultArea.setText("Query executed but no data structure found.\n\nRaw response:\n" + jsonResult);
+                        resultsTable.getColumns().clear();
+                        resultsTable.getItems().clear();
                     }
                 }
+            } else {
+                System.out.println("No results in response");
+                rawResultArea.setText("No results in response.\n\nRaw response:\n" + jsonResult);
+                resultsTable.getColumns().clear();
+                resultsTable.getItems().clear();
             }
         } catch (JSONException e) {
             System.err.println("Error parsing JSON: " + e.getMessage());
+            System.err.println("Raw response that caused error: " + jsonResult);
+            rawResultArea.setText("JSON Parsing Error: " + e.getMessage() + "\n\nRaw response:\n" + jsonResult);
+            resultsTable.getColumns().clear();
+            resultsTable.getItems().clear();
         }
     }
     
