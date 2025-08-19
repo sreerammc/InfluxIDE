@@ -10,7 +10,14 @@ Requirements:
 To run:
 1. Double-click "InfluxDB-IDE.bat"
 2. Enter your InfluxDB connection details
-3. Start querying!
+3. Test your connection to validate it
+4. Click Connect to open the main query interface
+5. Start querying!
+
+New Security Features:
+- Connection validation required before accessing query functionality
+- Detailed error dialogs with troubleshooting tips
+- Professional error handling for better user experience
 
 Files included:
 - InfluxDB-IDE.bat          (Launcher script)

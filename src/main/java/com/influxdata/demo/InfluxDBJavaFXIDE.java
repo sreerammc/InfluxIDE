@@ -211,21 +211,39 @@ public class InfluxDBJavaFXIDE extends Application {
             // Test connection
             CompletableFuture.supplyAsync(() -> {
                 try {
-                    return executeQueryHTTP(testHost, testToken, testDatabase, "SHOW MEASUREMENTS");
+                    System.out.println("Test connection: Testing " + testHost + " with database " + testDatabase);
+                    String result = executeQueryHTTP(testHost, testToken, testDatabase, "SHOW MEASUREMENTS");
+                    System.out.println("Test connection result: " + result.substring(0, Math.min(100, result.length())));
+                    return result;
                 } catch (Exception ex) {
+                    System.err.println("Test connection exception: " + ex.getMessage());
+                    ex.printStackTrace();
                     return "Error: " + ex.getMessage();
                 }
             }).thenAcceptAsync(result -> {
                 javafx.application.Platform.runLater(() -> {
                     testButton.setDisable(false);
-                    if (result.startsWith("Error:")) {
-                        statusLabel.setText("Connection failed: " + result);
+                    System.out.println("Test connection UI update: " + result.substring(0, Math.min(100, result.length())));
+                    if (result.startsWith("Error:") || result.startsWith("ERROR")) {
+                        statusLabel.setText("Connection test failed!");
                         statusLabel.setTextFill(Color.RED);
+                        // Show detailed error dialog for test connection
+                        showConnectionErrorDialog("Test Connection Failed:\n\n" + result);
                     } else {
-                        statusLabel.setText("Connection successful! Click Connect to continue.");
+                        statusLabel.setText("Connection test successful! Click Connect to continue.");
                         statusLabel.setTextFill(Color.GREEN);
                     }
                 });
+            }).exceptionally(throwable -> {
+                System.err.println("Test connection CompletableFuture exception: " + throwable.getMessage());
+                throwable.printStackTrace();
+                javafx.application.Platform.runLater(() -> {
+                    testButton.setDisable(false);
+                    statusLabel.setText("Connection test failed!");
+                    statusLabel.setTextFill(Color.RED);
+                    showConnectionErrorDialog("Test Connection Exception:\n\n" + throwable.getMessage());
+                });
+                return null;
             });
         });
 
@@ -240,7 +258,41 @@ public class InfluxDBJavaFXIDE extends Application {
                 return;
             }
             
-            connectionStage.close();
+            // Validate connection before proceeding
+            connectButton.setDisable(true);
+            statusLabel.setText("Validating connection...");
+            statusLabel.setTextFill(Color.BLUE);
+            
+            CompletableFuture.supplyAsync(() -> {
+                try {
+                    return executeQueryHTTP(this.host, this.token, this.database, "SHOW MEASUREMENTS");
+                } catch (Exception ex) {
+                    return "Error: " + ex.getMessage();
+                }
+            }).thenAcceptAsync(result -> {
+                javafx.application.Platform.runLater(() -> {
+                    connectButton.setDisable(false);
+                    if (result.startsWith("Error:") || result.startsWith("ERROR")) {
+                        // Connection failed - show detailed error
+                        statusLabel.setText("Connection validation failed!");
+                        statusLabel.setTextFill(Color.RED);
+                        showConnectionErrorDialog(result);
+                    } else {
+                        // Connection successful - proceed to main window
+                        statusLabel.setText("Connection validated successfully!");
+                        statusLabel.setTextFill(Color.GREEN);
+                        connectionStage.close();
+                    }
+                });
+            }).exceptionally(throwable -> {
+                javafx.application.Platform.runLater(() -> {
+                    connectButton.setDisable(false);
+                    statusLabel.setText("Connection validation failed!");
+                    statusLabel.setTextFill(Color.RED);
+                    showConnectionErrorDialog("Error: " + throwable.getMessage());
+                });
+                return null;
+            });
         });
 
         Scene connectionScene = new Scene(connectionLayout, 500, 400);
@@ -275,7 +327,19 @@ public class InfluxDBJavaFXIDE extends Application {
         Label connectionInfo = new Label("Connected to: " + host + " | Database: " + database);
         connectionInfo.setStyle("-fx-font-size: 12px; -fx-text-fill: #666666;");
         
-        headerBox.getChildren().addAll(titleLabel, connectionInfo);
+        // Add connection status indicator
+        HBox connectionStatusBox = new HBox(10);
+        connectionStatusBox.setAlignment(Pos.CENTER_LEFT);
+        
+        Label statusIcon = new Label("✅");
+        statusIcon.setStyle("-fx-font-size: 16px;");
+        
+        Label statusText = new Label("Connection Validated");
+        statusText.setStyle("-fx-font-size: 12px; -fx-text-fill: #4CAF50; -fx-font-weight: bold;");
+        
+        connectionStatusBox.getChildren().addAll(statusIcon, statusText);
+        
+        headerBox.getChildren().addAll(titleLabel, connectionInfo, connectionStatusBox);
 
         // Query section - compact layout
         VBox queryBox = createCompactQuerySection();
@@ -468,6 +532,41 @@ public class InfluxDBJavaFXIDE extends Application {
         return menuBar;
     }
 
+    private void showConnectionErrorDialog(String errorDetails) {
+        Alert alert = new Alert(Alert.AlertType.ERROR);
+        alert.setTitle("Connection Validation Failed");
+        alert.setHeaderText("Unable to connect to InfluxDB");
+        
+        // Create detailed error content
+        VBox content = new VBox(10);
+        content.setPadding(new Insets(10));
+        
+        Label errorLabel = new Label("Connection failed with the following error:");
+        errorLabel.setStyle("-fx-font-weight: bold;");
+        
+        TextArea errorArea = new TextArea(errorDetails);
+        errorArea.setEditable(false);
+        errorArea.setPrefRowCount(5);
+        errorArea.setWrapText(true);
+        errorArea.setStyle("-fx-font-family: Consolas; -fx-font-size: 11;");
+        
+        Label helpLabel = new Label("Please check:\n" +
+                                   "• Host address and port are correct\n" +
+                                   "• API token is valid and not expired\n" +
+                                   "• Database name exists\n" +
+                                   "• Network connectivity to the server");
+        helpLabel.setStyle("-fx-font-size: 11; -fx-text-fill: #666;");
+        
+        content.getChildren().addAll(errorLabel, errorArea, helpLabel);
+        alert.getDialogPane().setContent(content);
+        
+        // Make dialog resizable
+        alert.getDialogPane().setPrefWidth(600);
+        alert.getDialogPane().setPrefHeight(400);
+        
+        alert.showAndWait();
+    }
+
     private void showAboutDialog() {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         alert.setTitle("About InfluxDB IDE");
@@ -610,7 +709,7 @@ public class InfluxDBJavaFXIDE extends Application {
     private String executeQueryHTTP(String host, String token, String database, String query) throws Exception {
         String urlString = "http://" + host + "/query";
         
-        // Build query parameters
+        // Build query parameters - try both methods
         String params = String.format("p=%s&db=%s&q=%s",
             URLEncoder.encode(token, StandardCharsets.UTF_8),
             URLEncoder.encode(database, StandardCharsets.UTF_8),
@@ -618,16 +717,28 @@ public class InfluxDBJavaFXIDE extends Application {
         );
         
         URL url = new URL(urlString + "?" + params);
+        System.out.println("HTTP Request: " + url);
+        System.out.println("Token parameter: p=" + token.substring(0, Math.min(20, token.length())) + "...");
+        System.out.println("Database parameter: db=" + database);
+        System.out.println("Query parameter: q=" + query);
+        
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         
         // Set request method and headers
         connection.setRequestMethod("GET");
         connection.setRequestProperty("Accept", "application/json");
+        connection.setRequestProperty("User-Agent", "InfluxDB-IDE/1.0");
         connection.setConnectTimeout(10000);
         connection.setReadTimeout(10000);
         
+        // Debug authentication
+        System.out.println("Using token: " + token.substring(0, Math.min(20, token.length())) + "...");
+        System.out.println("Database: " + database);
+        
         try {
+            System.out.println("Connecting to: " + url);
             int responseCode = connection.getResponseCode();
+            System.out.println("Response Code: " + responseCode);
             
             if (responseCode == HttpURLConnection.HTTP_OK) {
                 // Read successful response
@@ -638,19 +749,48 @@ public class InfluxDBJavaFXIDE extends Application {
                     response.append(line);
                 }
                 reader.close();
-                return response.toString();
+                String result = response.toString();
+                System.out.println("Success response length: " + result.length());
+                return result;
             } else {
                 // Read error response
-                BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getErrorStream()));
                 StringBuilder response = new StringBuilder();
-                String line;
-                while ((line = reader.readLine()) != null) {
-                    response.append(line);
+                try {
+                    // Check if error stream exists
+                    if (connection.getErrorStream() != null) {
+                        BufferedReader reader = new BufferedReader(new InputStreamReader(connection.getErrorStream()));
+                        String line;
+                        while ((line = reader.readLine()) != null) {
+                            response.append(line);
+                        }
+                        reader.close();
+                    } else {
+                        // No error stream, create generic message
+                        response.append("HTTP ").append(responseCode).append(" Error");
+                        if (responseCode == 401) {
+                            response.append(" - Unauthorized. Check your API token.");
+                        } else if (responseCode == 403) {
+                            response.append(" - Forbidden. Check your permissions.");
+                        } else if (responseCode == 404) {
+                            response.append(" - Not Found. Check the endpoint URL.");
+                        } else if (responseCode >= 500) {
+                            response.append(" - Server Error. Try again later.");
+                        }
+                    }
+                } catch (Exception e) {
+                    System.err.println("Error reading error stream: " + e.getMessage());
+                    response.append("HTTP ").append(responseCode).append(" Error - Unable to read error details");
                 }
-                reader.close();
-                return "ERROR " + responseCode + ": " + response.toString();
+                
+                String errorResult = "ERROR " + responseCode + ": " + response.toString();
+                System.out.println("Error response: " + errorResult);
+                return errorResult;
             }
             
+        } catch (Exception e) {
+            System.err.println("HTTP connection exception: " + e.getMessage());
+            e.printStackTrace();
+            throw e;
         } finally {
             connection.disconnect();
         }
