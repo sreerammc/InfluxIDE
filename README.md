@@ -86,6 +86,8 @@ influxSimple/
 ├── pom.xml                        # Maven configuration
 ├── InfluxDB-IDE.bat              # Windows launcher
 ├── run.sh                         # Unix/Linux launcher
+├── create-distribution.ps1        # PowerShell distribution creator
+├── create-distribution.bat        # Batch distribution creator
 └── README.md                      # This file
 ```
 
@@ -106,8 +108,13 @@ mvn test
 # Build the project first
 mvn clean package
 
-# Copy JavaFX SDK to javafx-sdk folder
-# Run the application to test
+# Create distribution package (Windows)
+.\create-distribution.ps1
+# OR
+create-distribution.bat
+
+# This creates a complete standalone ZIP package
+# that includes JavaFX runtime and launcher scripts
 ```
 
 ## 📝 Dependencies
