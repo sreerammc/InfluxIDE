@@ -46,6 +46,9 @@ Thumbs.db
 InfluxDB-IDE-Standalone/
 javafx-sdk/
 
+# Distribution packages
+InfluxDB-IDE-v*/
+
 # Logs
 *.log
 logs/
