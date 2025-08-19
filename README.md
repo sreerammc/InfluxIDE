@@ -47,6 +47,8 @@ mvn javafx:run
 - **Database**: Database name (e.g., `test`)
 - **API Key**: Your InfluxDB API token
 
+**⚠️ Authentication Note:** This application only supports **API Key (Token) authentication**. It does **NOT** support OAuth, SAML, or other authentication methods. You must use a valid InfluxDB API token for authentication.
+
 ### Example Connection
 ```
 Host: 172.187.233.15
@@ -153,6 +155,7 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - Verify InfluxDB server is running
 - Check host, port, and API key
 - Ensure database exists and is accessible
+- **Authentication Method**: This app only supports API Key authentication, not OAuth/SAML
 
 #### Build Issues
 - Clean and rebuild: `mvn clean package`

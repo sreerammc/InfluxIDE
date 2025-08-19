@@ -160,9 +160,13 @@ public class InfluxDBJavaFXIDE extends Application {
         Label tokenLabel = new Label("Token:");
         tokenLabel.setMinWidth(100);
         PasswordField tokenField = new PasswordField();
-        tokenField.setText("apiv3_a1PqQhJopy_7fAFCYvbU6Bj7b0tNrYuCdD_ZydtXoEe_nqTReOB29OMFcZ7o_VBkPVSwK3o-ODnu5Gy4eeFfuQ");
+        tokenField.setText("apiv3_a1PqQhJopy_7fAFCYvbU6Bj7b0tNrYuCdD_ZydtXXoEe_nqTReOB29OMFcZ7o_VBkPVSwK3o-ODnu5Gy4eeFfuQ");
         tokenField.setPrefWidth(300);
         tokenBox.getChildren().addAll(tokenLabel, tokenField);
+        
+        // Authentication note
+        Label authNote = new Label("⚠️ API Key only - OAuth/SAML not supported");
+        authNote.setStyle("-fx-font-size: 10px; -fx-text-fill: #FF6B35; -fx-font-style: italic;");
 
         // Test connection button
         Button testButton = new Button("Test Connection");
@@ -180,7 +184,7 @@ public class InfluxDBJavaFXIDE extends Application {
         buttonBox.setAlignment(Pos.CENTER);
         buttonBox.getChildren().addAll(testButton, connectButton);
 
-        formBox.getChildren().addAll(hostBox, dbBox, tokenBox, buttonBox);
+        formBox.getChildren().addAll(hostBox, dbBox, tokenBox, authNote, buttonBox);
 
         // Status label
         Label statusLabel = new Label("Enter your InfluxDB connection details");

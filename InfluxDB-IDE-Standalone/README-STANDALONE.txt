@@ -5,6 +5,7 @@ This package contains everything needed to run the InfluxDB IDE.
 
 Requirements:
 - Java 11 or higher
+- InfluxDB API token (OAuth/SAML not supported)
 
 To run:
 1. Double-click "InfluxDB-IDE.bat"
