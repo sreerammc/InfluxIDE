@@ -42,6 +42,7 @@ import javafx.scene.image.WritableImage;
 
 public class InfluxDBJavaFXIDE extends Application {
 
+    private String protocol = "http"; // Default to HTTP
     private String host;
     private String database;
     private String token;
@@ -136,6 +137,17 @@ public class InfluxDBJavaFXIDE extends Application {
         formBox.setPadding(new Insets(20));
         formBox.setStyle("-fx-background-color: white; -fx-border-color: #cccccc; -fx-border-radius: 5; -fx-background-radius: 5;");
 
+        // Protocol field
+        HBox protocolBox = new HBox(10);
+        protocolBox.setAlignment(Pos.CENTER_LEFT);
+        Label protocolLabel = new Label("Protocol:");
+        protocolLabel.setMinWidth(100);
+        ComboBox<String> protocolCombo = new ComboBox<>();
+        protocolCombo.getItems().addAll("http", "https");
+        protocolCombo.setValue("http");
+        protocolCombo.setPrefWidth(100);
+        protocolBox.getChildren().addAll(protocolLabel, protocolCombo);
+
         // Host field
         HBox hostBox = new HBox(10);
         hostBox.setAlignment(Pos.CENTER_LEFT);
@@ -184,7 +196,7 @@ public class InfluxDBJavaFXIDE extends Application {
         buttonBox.setAlignment(Pos.CENTER);
         buttonBox.getChildren().addAll(testButton, connectButton);
 
-        formBox.getChildren().addAll(hostBox, dbBox, tokenBox, authNote, buttonBox);
+        formBox.getChildren().addAll(protocolBox, hostBox, dbBox, tokenBox, authNote, buttonBox);
 
         // Status label
         Label statusLabel = new Label("Enter your InfluxDB connection details");
@@ -194,6 +206,7 @@ public class InfluxDBJavaFXIDE extends Application {
 
         // Event handlers
         testButton.setOnAction(e -> {
+            String testProtocol = protocolCombo.getValue();
             String testHost = hostField.getText().trim();
             String testDatabase = databaseField.getText().trim();
             String testToken = tokenField.getText().trim();
@@ -211,8 +224,8 @@ public class InfluxDBJavaFXIDE extends Application {
             // Test connection
             CompletableFuture.supplyAsync(() -> {
                 try {
-                    System.out.println("Test connection: Testing " + testHost + " with database " + testDatabase);
-                    String result = executeQueryHTTP(testHost, testToken, testDatabase, "SHOW MEASUREMENTS");
+                    System.out.println("Test connection: Testing " + testProtocol + "://" + testHost + " with database " + testDatabase);
+                    String result = executeQueryHTTP(testProtocol, testHost, testToken, testDatabase, "SHOW MEASUREMENTS");
                     System.out.println("Test connection result: " + result.substring(0, Math.min(100, result.length())));
                     return result;
                 } catch (Exception ex) {
@@ -248,6 +261,7 @@ public class InfluxDBJavaFXIDE extends Application {
         });
 
         connectButton.setOnAction(e -> {
+            this.protocol = protocolCombo.getValue();
             this.host = hostField.getText().trim();
             this.database = databaseField.getText().trim();
             this.token = tokenField.getText().trim();
@@ -265,7 +279,7 @@ public class InfluxDBJavaFXIDE extends Application {
             
             CompletableFuture.supplyAsync(() -> {
                 try {
-                    return executeQueryHTTP(this.host, this.token, this.database, "SHOW MEASUREMENTS");
+                    return executeQueryHTTP(this.protocol, this.host, this.token, this.database, "SHOW MEASUREMENTS");
                 } catch (Exception ex) {
                     return "Error: " + ex.getMessage();
                 }
@@ -324,7 +338,7 @@ public class InfluxDBJavaFXIDE extends Application {
         titleLabel.setFont(Font.font("Arial", FontWeight.BOLD, 24));
         titleLabel.setTextFill(Color.DARKBLUE);
         
-        Label connectionInfo = new Label("Connected to: " + host + " | Database: " + database);
+        Label connectionInfo = new Label("Connected to: " + protocol + "://" + host + " | Database: " + database);
         connectionInfo.setStyle("-fx-font-size: 12px; -fx-text-fill: #666666;");
         
         // Add connection status indicator
@@ -681,7 +695,7 @@ public class InfluxDBJavaFXIDE extends Application {
         // Execute query asynchronously
         CompletableFuture.supplyAsync(() -> {
             try {
-                return executeQueryHTTP(host, token, database, query);
+                return executeQueryHTTP(protocol, host, token, database, query);
             } catch (Exception ex) {
                 return "Error: " + ex.getMessage();
             }
@@ -706,8 +720,8 @@ public class InfluxDBJavaFXIDE extends Application {
         });
     }
 
-    private String executeQueryHTTP(String host, String token, String database, String query) throws Exception {
-        String urlString = "http://" + host + "/query";
+    private String executeQueryHTTP(String protocol, String host, String token, String database, String query) throws Exception {
+        String urlString = protocol + "://" + host + "/query";
         
         // Build query parameters - try both methods
         String params = String.format("p=%s&db=%s&q=%s",
@@ -730,6 +744,11 @@ public class InfluxDBJavaFXIDE extends Application {
         connection.setRequestProperty("User-Agent", "InfluxDB-IDE/1.0");
         connection.setConnectTimeout(10000);
         connection.setReadTimeout(10000);
+        
+        // Handle HTTPS connections
+        if ("https".equalsIgnoreCase(protocol)) {
+            System.out.println("Using HTTPS connection with SSL/TLS");
+        }
         
         // Debug authentication
         System.out.println("Using token: " + token.substring(0, Math.min(20, token.length())) + "...");
