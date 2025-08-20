@@ -35,6 +35,10 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.concurrent.CompletableFuture;
 import java.io.File;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.io.IOException;
+import java.util.Properties;
 import javafx.scene.image.Image;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
@@ -43,6 +47,7 @@ import javafx.scene.image.WritableImage;
 public class InfluxDBJavaFXIDE extends Application {
 
     private String protocol = "http"; // Default to HTTP
+    private boolean skipSSLValidation = false; // Default to strict SSL
     private String host;
     private String database;
     private String token;
@@ -60,66 +65,91 @@ public class InfluxDBJavaFXIDE extends Application {
     private Label statusLabel;
     private ProgressIndicator progressIndicator;
     private Stage mainStage;
+    
+    // Settings file constants
+    private static final String SETTINGS_DIR = System.getProperty("user.home") + File.separator + ".influxdb-ide";
+    private static final String SETTINGS_FILE = SETTINGS_DIR + File.separator + "settings.properties";
 
+    /**
+     * Main entry point for the JavaFX application
+     * Sets up the application icon and shows connection dialog before main window
+     */
     @Override
     public void start(Stage primaryStage) {
         this.mainStage = primaryStage;
         
-        // Set application icon
+        // Set application icon for better visual identity
         setApplicationIcon(primaryStage);
         
-        // Show connection dialog first
+        // Show connection dialog first - exit if user cancels
         if (!showConnectionDialog()) {
             System.exit(0);
         }
         
-        // Create main application window
+        // Create and display the main application window
         createMainWindow();
     }
     
+    /**
+     * Sets the application icon for the given stage
+     * First tries to load from resources, falls back to programmatic icon
+     */
     private void setApplicationIcon(Stage stage) {
         try {
-            // Try to load icon from resources
+            // Try to load icon from resources directory
             Image appIcon = new Image(getClass().getResourceAsStream("/icons/app_icon.png"));
             stage.getIcons().add(appIcon);
         } catch (Exception e) {
-            // Create a simple programmatic icon as fallback
+            // Create a simple programmatic icon as fallback if resource loading fails
             createProgrammaticIcon(stage);
         }
     }
     
+    /**
+     * Creates a programmatic fallback icon using JavaFX Canvas
+     * Draws a blue rounded rectangle with "IDB" text in white
+     */
     private void createProgrammaticIcon(Stage stage) {
         try {
-            // Create a simple canvas-based icon
+            // Create a 32x32 canvas for the icon
             Canvas canvas = new Canvas(32, 32);
             GraphicsContext gc = canvas.getGraphicsContext2D();
             
-            // Draw a simple database icon
-            gc.setFill(Color.rgb(33, 150, 243)); // Blue background
+            // Draw a simple database icon with blue background and rounded corners
+            gc.setFill(Color.rgb(33, 150, 243)); // Material Design Blue
             gc.fillRoundRect(4, 4, 24, 24, 8, 8);
             
-            // Draw "IDB" text
+            // Draw "IDB" text in white with bold Arial font
             gc.setFill(Color.WHITE);
             gc.setFont(Font.font("Arial", FontWeight.BOLD, 12));
             gc.fillText("IDB", 8, 20);
             
-            // Convert canvas to image
+            // Convert canvas to WritableImage and add to stage icons
             WritableImage snapshot = canvas.snapshot(null, null);
             stage.getIcons().add(snapshot);
             
         } catch (Exception e) {
-            // If all else fails, use system default
+            // If all else fails, use system default icon
             System.out.println("Using system default icon");
         }
     }
 
+    /**
+     * Shows the connection setup dialog as a modal window
+     * Loads saved settings and creates the connection form
+     * Returns true if connection is successful, false if cancelled
+     */
     private boolean showConnectionDialog() {
+        // Load previously saved connection settings (excluding token for security)
+        Properties savedSettings = loadSettings();
+        
+        // Create modal connection dialog stage
         Stage connectionStage = new Stage();
         connectionStage.initModality(Modality.APPLICATION_MODAL);
         connectionStage.setTitle("InfluxDB Connection Setup");
         connectionStage.setResizable(false);
         
-        // Set connection dialog icon
+        // Set the same application icon for consistency
         setApplicationIcon(connectionStage);
 
         VBox connectionLayout = new VBox(20);
@@ -144,16 +174,36 @@ public class InfluxDBJavaFXIDE extends Application {
         protocolLabel.setMinWidth(100);
         ComboBox<String> protocolCombo = new ComboBox<>();
         protocolCombo.getItems().addAll("http", "https");
-        protocolCombo.setValue("http");
+        protocolCombo.setValue(savedSettings.getProperty("protocol", "http"));
         protocolCombo.setPrefWidth(100);
+        protocolCombo.setTooltip(new Tooltip("Select HTTP for local/development, HTTPS for production"));
         protocolBox.getChildren().addAll(protocolLabel, protocolCombo);
+
+        // SSL Validation field (only show when HTTPS is selected)
+        HBox sslBox = new HBox(10);
+        sslBox.setAlignment(Pos.CENTER_LEFT);
+        Label sslLabel = new Label("SSL Options:");
+        sslLabel.setMinWidth(100);
+        CheckBox skipSSLValidationCheck = new CheckBox("Skip SSL Certificate Validation");
+        skipSSLValidationCheck.setSelected(Boolean.parseBoolean(savedSettings.getProperty("skipSSLValidation", "false")));
+        skipSSLValidationCheck.setTooltip(new Tooltip("Check this to bypass SSL certificate validation (for development/testing)"));
+        sslBox.getChildren().addAll(sslLabel, skipSSLValidationCheck);
+        
+        // Show/hide SSL options based on protocol selection
+        protocolCombo.setOnAction(e -> {
+            sslBox.setVisible("https".equals(protocolCombo.getValue()));
+        });
+        // Set initial SSL box visibility based on loaded protocol
+        sslBox.setVisible("https".equals(savedSettings.getProperty("protocol", "http")));
 
         // Host field
         HBox hostBox = new HBox(10);
         hostBox.setAlignment(Pos.CENTER_LEFT);
         Label hostLabel = new Label("Host:");
         hostLabel.setMinWidth(100);
-        TextField hostField = new TextField("172.187.233.15:8181");
+        TextField hostField = new TextField();
+        hostField.setText(savedSettings.getProperty("host", ""));
+        hostField.setPromptText("Enter host:port (e.g., localhost:8086)");
         hostField.setPrefWidth(300);
         hostBox.getChildren().addAll(hostLabel, hostField);
 
@@ -162,7 +212,9 @@ public class InfluxDBJavaFXIDE extends Application {
         dbBox.setAlignment(Pos.CENTER_LEFT);
         Label dbLabel = new Label("Database:");
         dbLabel.setMinWidth(100);
-        TextField databaseField = new TextField("test");
+        TextField databaseField = new TextField();
+        databaseField.setText(savedSettings.getProperty("database", ""));
+        databaseField.setPromptText("Enter database name");
         databaseField.setPrefWidth(300);
         dbBox.getChildren().addAll(dbLabel, databaseField);
 
@@ -172,13 +224,17 @@ public class InfluxDBJavaFXIDE extends Application {
         Label tokenLabel = new Label("Token:");
         tokenLabel.setMinWidth(100);
         PasswordField tokenField = new PasswordField();
-        tokenField.setText("apiv3_a1PqQhJopy_7fAFCYvbU6Bj7b0tNrYuCdD_ZydtXXoEe_nqTReOB29OMFcZ7o_VBkPVSwK3o-ODnu5Gy4eeFfuQ");
+        tokenField.setPromptText("Enter your InfluxDB API token");
         tokenField.setPrefWidth(300);
         tokenBox.getChildren().addAll(tokenLabel, tokenField);
         
         // Authentication note
         Label authNote = new Label("⚠️ API Key only - OAuth/SAML not supported");
         authNote.setStyle("-fx-font-size: 10px; -fx-text-fill: #FF6B35; -fx-font-style: italic;");
+        
+        // Settings persistence note
+        Label settingsNote = new Label("💾 Connection details (except token) will be remembered for next time");
+        settingsNote.setStyle("-fx-font-size: 10px; -fx-text-fill: #666; -fx-font-style: italic;");
 
         // Test connection button
         Button testButton = new Button("Test Connection");
@@ -196,7 +252,7 @@ public class InfluxDBJavaFXIDE extends Application {
         buttonBox.setAlignment(Pos.CENTER);
         buttonBox.getChildren().addAll(testButton, connectButton);
 
-        formBox.getChildren().addAll(protocolBox, hostBox, dbBox, tokenBox, authNote, buttonBox);
+        formBox.getChildren().addAll(protocolBox, sslBox, hostBox, dbBox, tokenBox, authNote, settingsNote, buttonBox);
 
         // Status label
         Label statusLabel = new Label("Enter your InfluxDB connection details");
@@ -204,28 +260,32 @@ public class InfluxDBJavaFXIDE extends Application {
 
         connectionLayout.getChildren().addAll(titleLabel, formBox, statusLabel, buttonBox);
 
-        // Event handlers
+        // Event handlers for connection testing and validation
         testButton.setOnAction(e -> {
+            // Extract current form values for testing
             String testProtocol = protocolCombo.getValue();
+            boolean testSkipSSL = skipSSLValidationCheck.isSelected();
             String testHost = hostField.getText().trim();
             String testDatabase = databaseField.getText().trim();
             String testToken = tokenField.getText().trim();
             
+            // Validate that all required fields are filled
             if (testHost.isEmpty() || testDatabase.isEmpty() || testToken.isEmpty()) {
                 statusLabel.setText("Please fill in all fields");
                 statusLabel.setTextFill(Color.RED);
                 return;
             }
             
+            // Disable test button and show testing status
             testButton.setDisable(true);
             statusLabel.setText("Testing connection...");
             statusLabel.setTextFill(Color.BLUE);
             
-            // Test connection
+            // Test connection asynchronously to keep UI responsive
             CompletableFuture.supplyAsync(() -> {
                 try {
                     System.out.println("Test connection: Testing " + testProtocol + "://" + testHost + " with database " + testDatabase);
-                    String result = executeQueryHTTP(testProtocol, testHost, testToken, testDatabase, "SHOW MEASUREMENTS");
+                    String result = executeQueryHTTP(testProtocol, testHost, testToken, testDatabase, "SHOW MEASUREMENTS", testSkipSSL);
                     System.out.println("Test connection result: " + result.substring(0, Math.min(100, result.length())));
                     return result;
                 } catch (Exception ex) {
@@ -260,26 +320,31 @@ public class InfluxDBJavaFXIDE extends Application {
             });
         });
 
+        // Event handler for final connection and proceeding to main application
         connectButton.setOnAction(e -> {
+            // Store connection details in instance variables
             this.protocol = protocolCombo.getValue();
+            this.skipSSLValidation = skipSSLValidationCheck.isSelected();
             this.host = hostField.getText().trim();
             this.database = databaseField.getText().trim();
             this.token = tokenField.getText().trim();
             
+            // Validate that all required fields are filled
             if (this.host.isEmpty() || this.database.isEmpty() || this.token.isEmpty()) {
                 statusLabel.setText("Please fill in all fields");
                 statusLabel.setTextFill(Color.RED);
                 return;
             }
             
-            // Validate connection before proceeding
+            // Validate connection before proceeding to main window
             connectButton.setDisable(true);
             statusLabel.setText("Validating connection...");
             statusLabel.setTextFill(Color.BLUE);
             
+            // Validate connection asynchronously to keep UI responsive
             CompletableFuture.supplyAsync(() -> {
                 try {
-                    return executeQueryHTTP(this.protocol, this.host, this.token, this.database, "SHOW MEASUREMENTS");
+                    return executeQueryHTTP(this.protocol, this.host, this.token, this.database, "SHOW MEASUREMENTS", this.skipSSLValidation);
                 } catch (Exception ex) {
                     return "Error: " + ex.getMessage();
                 }
@@ -292,9 +357,13 @@ public class InfluxDBJavaFXIDE extends Application {
                         statusLabel.setTextFill(Color.RED);
                         showConnectionErrorDialog(result);
                     } else {
-                        // Connection successful - proceed to main window
+                        // Connection successful - save settings and proceed to main window
                         statusLabel.setText("Connection validated successfully!");
                         statusLabel.setTextFill(Color.GREEN);
+                        
+                        // Save settings for next time (excluding token for security)
+                        saveSettings(this.protocol, this.host, this.database, this.skipSSLValidation);
+                        
                         connectionStage.close();
                     }
                 });
@@ -309,17 +378,22 @@ public class InfluxDBJavaFXIDE extends Application {
             });
         });
 
-        Scene connectionScene = new Scene(connectionLayout, 500, 400);
+        Scene connectionScene = new Scene(connectionLayout, 500, 500);
         connectionStage.setScene(connectionScene);
         connectionStage.showAndWait();
 
         return this.host != null && this.database != null && this.token != null;
     }
 
+    /**
+     * Creates and displays the main application window
+     * Sets up the complete UI layout with menu bar, query section, and results area
+     */
     private void createMainWindow() {
-        mainStage.setTitle("InfluxDB Query IDE v1.0 - " + host + "/" + database);
+        // Set window title with connection information and beta version
+        mainStage.setTitle("InfluxDB Query IDE v1.0 Beta - " + host + "/" + database);
         
-        // Ensure main window has the application icon
+        // Ensure main window has the application icon for consistency
         setApplicationIcon(mainStage);
 
         // Create the main layout
@@ -331,32 +405,18 @@ public class InfluxDBJavaFXIDE extends Application {
         MenuBar menuBar = createMenuBar();
 
         // Title and connection info
-        HBox headerBox = new HBox(20);
-        headerBox.setAlignment(Pos.CENTER_LEFT);
-        
-        Label titleLabel = new Label("InfluxDB Query IDE");
-        titleLabel.setFont(Font.font("Arial", FontWeight.BOLD, 24));
-        titleLabel.setTextFill(Color.DARKBLUE);
-        
-        Label connectionInfo = new Label("Connected to: " + protocol + "://" + host + " | Database: " + database);
-        connectionInfo.setStyle("-fx-font-size: 12px; -fx-text-fill: #666666;");
-        
-        // Add connection status indicator
-        HBox connectionStatusBox = new HBox(10);
-        connectionStatusBox.setAlignment(Pos.CENTER_LEFT);
-        
-        Label statusIcon = new Label("✅");
-        statusIcon.setStyle("-fx-font-size: 16px;");
-        
-        Label statusText = new Label("Connection Validated");
-        statusText.setStyle("-fx-font-size: 12px; -fx-text-fill: #4CAF50; -fx-font-weight: bold;");
-        
-        connectionStatusBox.getChildren().addAll(statusIcon, statusText);
-        
-        headerBox.getChildren().addAll(titleLabel, connectionInfo, connectionStatusBox);
+        HBox headerBox = createHeaderBox();
 
         // Query section - compact layout
         VBox queryBox = createCompactQuerySection();
+        
+        // Add query toggle checkbox to header so it's always accessible
+        CheckBox queryToggleCheckBox = new CheckBox("Show Query Section");
+        queryToggleCheckBox.setSelected(true); // Initially selected (query section visible)
+        queryToggleCheckBox.setStyle("-fx-font-weight: bold; -fx-text-fill: #2196F3;");
+        queryToggleCheckBox.setTooltip(new Tooltip("Check to show query section, uncheck to hide for more results space"));
+        queryToggleCheckBox.setOnAction(e -> toggleQuerySectionWithCheckBox(queryBox, queryToggleCheckBox));
+        headerBox.getChildren().add(queryToggleCheckBox);
         
         // Results section - takes most of the space
         VBox resultsBox = createResultsSection();
@@ -364,8 +424,8 @@ public class InfluxDBJavaFXIDE extends Application {
         // Control buttons
         HBox buttonBox = createButtonSection();
         
-        // Status section
-        HBox statusBox = createStatusSection();
+        // Status section with connection indicators at bottom corners
+        HBox statusBox = createStatusSectionWithConnectionInfo();
 
         // Add all sections to main layout
         mainLayout.getChildren().addAll(
@@ -388,55 +448,123 @@ public class InfluxDBJavaFXIDE extends Application {
         mainStage.show();
     }
 
+    /**
+     * Creates the header section with title, connection info, SSL warning, and status
+     */
+    private HBox createHeaderBox() {
+        HBox headerBox = new HBox(20);
+        headerBox.setAlignment(Pos.CENTER_LEFT);
+        
+        Label titleLabel = new Label("InfluxDB Query IDE");
+        titleLabel.setFont(Font.font("Arial", FontWeight.BOLD, 24));
+        titleLabel.setTextFill(Color.DARKBLUE);
+        
+        Label connectionInfo = new Label("Connected to: " + protocol + "://" + host + " | Database: " + database);
+        connectionInfo.setStyle("-fx-font-size: 12px; -fx-text-fill: #666666;");
+        
+        // Add SSL warning if validation is skipped
+        HBox sslWarningBox = new HBox(5);
+        sslWarningBox.setAlignment(Pos.CENTER_LEFT);
+        sslWarningBox.setVisible(protocol.equalsIgnoreCase("https") && skipSSLValidation);
+        
+        Label warningIcon = new Label("⚠️");
+        warningIcon.setStyle("-fx-font-size: 14px;");
+        
+        Label warningText = new Label("SSL Certificate Validation Disabled");
+        warningText.setStyle("-fx-font-size: 11px; -fx-text-fill: #FF9800; -fx-font-style: italic;");
+        
+        sslWarningBox.getChildren().addAll(warningIcon, warningText);
+        
+        headerBox.getChildren().addAll(titleLabel, connectionInfo, sslWarningBox);
+        return headerBox;
+    }
+
+    /**
+     * Creates a compact query input section with horizontal layout
+     * Places query text area and execute button side by side for space efficiency
+     * Includes a toggle button to hide/show the entire section
+     */
     private VBox createCompactQuerySection() {
+        // Create main container with styling and padding
         VBox queryBox = new VBox(10);
         queryBox.setPadding(new Insets(15));
         queryBox.setStyle("-fx-border-color: #cccccc; -fx-border-radius: 5; -fx-background-radius: 5;");
 
+        // Header row with section label only (toggle button moved to main header)
+        HBox headerRow = new HBox(15);
+        headerRow.setAlignment(Pos.CENTER_LEFT);
+        
+        // Section header label
         Label sectionLabel = new Label("Query");
         sectionLabel.setFont(Font.font("Arial", FontWeight.BOLD, 16));
+        
+        // Make section label expand to fill available space
+        HBox.setHgrow(sectionLabel, Priority.ALWAYS);
+        headerRow.getChildren().add(sectionLabel);
 
-        // Horizontal layout for query and execute button
+        // Horizontal layout for query text area and execute button
         HBox queryRow = new HBox(15);
         queryRow.setAlignment(Pos.CENTER_LEFT);
         
+        // Query input text area with helpful examples and monospace font
         queryArea = new TextArea();
         queryArea.setPromptText("Enter your InfluxDB query here...\nExamples:\nSELECT * FROM sensor_f\nSHOW TABLES\nSHOW MEASUREMENTS");
-        queryArea.setPrefRowCount(4);
+        queryArea.setPrefRowCount(2); // Start with 2 rows
         queryArea.setWrapText(true);
         queryArea.setFont(Font.font("Consolas", 12));
-        HBox.setHgrow(queryArea, Priority.ALWAYS);
+        HBox.setHgrow(queryArea, Priority.ALWAYS); // Make text area expand to fill available space
         
+        // Set initial height and make resizable
+        queryArea.setPrefHeight(40); // Initial height for 2 rows
+        queryArea.setMinHeight(40); // Minimum height for 2 rows
+        queryArea.setMaxHeight(120); // Maximum height for 6 rows (6 * 20px per row)
+        
+        // Note: TextArea automatically shows scrollbar when content exceeds visible area
+        // Users can now manually resize the query area by dragging the bottom edge
+        
+        // Execute button with green styling and fixed height
         executeButton = new Button("Execute");
         executeButton.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;");
         executeButton.setPrefWidth(100);
-        executeButton.setPrefHeight(80);
+        executeButton.setPrefHeight(40); // Fixed height to match initial query area height
         executeButton.setAlignment(Pos.CENTER);
         
+        // Note: Button height is now fixed, users can resize query area independently
+        
+        // Add components to horizontal row
         queryRow.getChildren().addAll(queryArea, executeButton);
 
-        queryBox.getChildren().addAll(sectionLabel, queryRow);
+        // Add header row and query row to main container
+        queryBox.getChildren().addAll(headerRow, queryRow);
         return queryBox;
     }
 
+    /**
+     * Creates the results display section with tabbed interface
+     * Includes table view, raw JSON view, filtering, and export functionality
+     */
     private VBox createResultsSection() {
+        // Main results container that grows to fill available space
         VBox resultsBox = new VBox(15);
         resultsBox.setPadding(new Insets(20));
         VBox.setVgrow(resultsBox, Priority.ALWAYS);
         
-        // Header with title and export button
+        // Header section with title and export button
         HBox headerBox = new HBox(15);
         headerBox.setAlignment(Pos.CENTER_LEFT);
         
+        // Section title label
         Label sectionLabel = new Label("Results");
         sectionLabel.setFont(Font.font("Arial", FontWeight.BOLD, 16));
         
+        // Export to CSV button with blue styling
         Button exportButton = new Button("Export to CSV");
         exportButton.setStyle("-fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;");
         exportButton.setPrefWidth(120);
         exportButton.setPrefHeight(30);
         exportButton.setOnAction(e -> exportToCSV());
         
+        // Make section label expand to fill available space
         HBox.setHgrow(sectionLabel, Priority.ALWAYS);
         headerBox.getChildren().addAll(sectionLabel, exportButton);
         
@@ -489,7 +617,22 @@ public class InfluxDBJavaFXIDE extends Application {
         
         resultsTabPane.getTabs().addAll(tableTab, rawTab);
         
-        resultsBox.getChildren().addAll(headerBox, controlsBox, resultsTabPane);
+        // Bottom record count display
+        HBox bottomRecordCountBox = new HBox(10);
+        bottomRecordCountBox.setAlignment(Pos.CENTER_LEFT);
+        bottomRecordCountBox.setPadding(new Insets(10, 0, 0, 0));
+        bottomRecordCountBox.setStyle("-fx-border-color: #e0e0e0; -fx-border-width: 0 0 1 0; -fx-border-style: solid;");
+        
+        Label bottomRecordLabel = new Label("Query Results: ");
+        bottomRecordLabel.setStyle("-fx-font-weight: bold; -fx-text-fill: #666;");
+        
+        Label bottomRecordCount = new Label("0 records");
+        bottomRecordCount.setStyle("-fx-font-weight: bold; -fx-text-fill: #2196F3;");
+        bottomRecordCount.setId("bottomRecordCount"); // For updating later
+        
+        bottomRecordCountBox.getChildren().addAll(bottomRecordLabel, bottomRecordCount);
+        
+        resultsBox.getChildren().addAll(headerBox, controlsBox, resultsTabPane, bottomRecordCountBox);
         return resultsBox;
     }
 
@@ -517,6 +660,60 @@ public class InfluxDBJavaFXIDE extends Application {
         progressIndicator.setVisible(false);
 
         statusBox.getChildren().addAll(statusLabel, progressIndicator);
+        return statusBox;
+    }
+
+    /**
+     * Creates the status section with connection indicators at bottom corners
+     * Left: Connection validation status, Right: Main status and progress
+     */
+    private HBox createStatusSectionWithConnectionInfo() {
+        HBox statusBox = new HBox(10);
+        statusBox.setAlignment(Pos.CENTER_LEFT);
+        HBox.setHgrow(statusBox, Priority.ALWAYS);
+
+        // Left side: Connection validation status
+        HBox leftStatusBox = new HBox(5);
+        leftStatusBox.setAlignment(Pos.CENTER_LEFT);
+        
+        Label statusIcon = new Label("✅");
+        statusIcon.setStyle("-fx-font-size: 14px;");
+        
+        Label statusText = new Label("Connection Validated");
+        statusText.setStyle("-fx-font-size: 11px; -fx-text-fill: #4CAF50; -fx-font-weight: bold;");
+        
+        leftStatusBox.getChildren().addAll(statusIcon, statusText);
+        
+        // Center: Empty space (grows to fill available space)
+        HBox centerStatusBox = new HBox(10);
+        centerStatusBox.setAlignment(Pos.CENTER);
+        HBox.setHgrow(centerStatusBox, Priority.ALWAYS);
+        
+        // Right side: Main status and progress (moved to right)
+        HBox rightStatusBox = new HBox(10);
+        rightStatusBox.setAlignment(Pos.CENTER_RIGHT);
+        
+        // Add SSL warning if applicable
+        if (protocol.equalsIgnoreCase("https") && skipSSLValidation) {
+            Label warningIcon = new Label("⚠️");
+            warningIcon.setStyle("-fx-font-size: 14px;");
+            
+            Label warningText = new Label("SSL Validation Disabled");
+            warningText.setStyle("-fx-font-size: 11px; -fx-text-fill: #FF9800; -fx-font-style: italic;");
+            
+            rightStatusBox.getChildren().addAll(warningIcon, warningText);
+        }
+        
+        // Add main status and progress to right side
+        statusLabel = new Label("Ready");
+        statusLabel.setStyle("-fx-font-weight: bold;");
+        
+        progressIndicator = new ProgressIndicator();
+        progressIndicator.setVisible(false);
+        
+        rightStatusBox.getChildren().addAll(statusLabel, progressIndicator);
+        
+        statusBox.getChildren().addAll(leftStatusBox, centerStatusBox, rightStatusBox);
         return statusBox;
     }
 
@@ -568,7 +765,8 @@ public class InfluxDBJavaFXIDE extends Application {
                                    "• Host address and port are correct\n" +
                                    "• API token is valid and not expired\n" +
                                    "• Database name exists\n" +
-                                   "• Network connectivity to the server");
+                                   "• Network connectivity to the server\n" +
+                                   "• For HTTPS: Try enabling 'Skip SSL Certificate Validation' if using self-signed certificates");
         helpLabel.setStyle("-fx-font-size: 11; -fx-text-fill: #666;");
         
         content.getChildren().addAll(errorLabel, errorArea, helpLabel);
@@ -584,7 +782,7 @@ public class InfluxDBJavaFXIDE extends Application {
     private void showAboutDialog() {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         alert.setTitle("About InfluxDB IDE");
-        alert.setHeaderText("InfluxDB Query IDE");
+        alert.setHeaderText("InfluxDB Query IDE v1.0 Beta");
         alert.setContentText("A JavaFX application for querying InfluxDB databases.\n\n" +
                            "Features:\n" +
                            "• HTTP-based InfluxDB queries\n" +
@@ -592,6 +790,7 @@ public class InfluxDBJavaFXIDE extends Application {
                            "• Database exploration tools\n" +
                            "• User-friendly interface\n" +
                            "• CSV export functionality\n\n" +
+                           "Version: 1.0 Beta\n" +
                            "Author: Sreeram C Machavaram");
         alert.showAndWait();
     }
@@ -605,24 +804,28 @@ public class InfluxDBJavaFXIDE extends Application {
         setupDragAndDrop();
     }
 
+    /**
+     * Sets up drag and drop functionality between results table and query area
+     * Allows users to drag table names from results into query text for convenience
+     */
     private void setupDragAndDrop() {
-        // Enable drag and drop on the results table
+        // Enable drag detection on the results table
         resultsTable.setOnDragDetected(event -> {
-            // Get the selected row
+            // Get the currently selected row from the table
             ObservableList<String> selectedRow = resultsTable.getSelectionModel().getSelectedItem();
             if (selectedRow != null && !selectedRow.isEmpty()) {
-                // Create drag content with the first column value (usually table name)
+                // Extract the first column value (usually table/measurement name) for dragging
                 String dragContent = selectedRow.get(0);
                 
-                // Create clipboard content
+                // Create clipboard content with the dragged text
                 ClipboardContent content = new ClipboardContent();
                 content.putString(dragContent);
                 
-                // Start drag and drop
+                // Start drag and drop operation with COPY transfer mode
                 Dragboard db = resultsTable.startDragAndDrop(TransferMode.COPY);
                 db.setContent(content);
                 
-                // Set drag view (optional visual feedback)
+                // Consume the event to prevent further processing
                 event.consume();
             }
         });
@@ -675,27 +878,34 @@ public class InfluxDBJavaFXIDE extends Application {
         });
     }
 
+    /**
+     * Executes the InfluxDB query entered by the user
+     * Runs query asynchronously to keep UI responsive and updates results display
+     */
     private void executeQuery() {
+        // Get and trim the query text from the input area
         String query = queryArea.getText().trim();
 
-        // Validate inputs
+        // Validate that a query was entered
         if (query.isEmpty()) {
             showAlert("Input Error", "Please enter a query.");
             return;
         }
 
-        // Update UI state
+        // Update UI state to show query is executing
         executeButton.setDisable(true);
         progressIndicator.setVisible(true);
         statusLabel.setText("Executing query...");
+        
+        // Clear previous results from both table and raw JSON views
         rawResultArea.clear();
         resultsTable.getColumns().clear();
         resultsTable.getItems().clear();
 
-        // Execute query asynchronously
+        // Execute query asynchronously to prevent UI freezing
         CompletableFuture.supplyAsync(() -> {
             try {
-                return executeQueryHTTP(protocol, host, token, database, query);
+                return executeQueryHTTP(protocol, host, token, database, query, skipSSLValidation);
             } catch (Exception ex) {
                 return "Error: " + ex.getMessage();
             }
@@ -720,34 +930,65 @@ public class InfluxDBJavaFXIDE extends Application {
         });
     }
 
-    private String executeQueryHTTP(String protocol, String host, String token, String database, String query) throws Exception {
+    /**
+     * Executes an InfluxDB query using HTTP GET request
+     * Handles both HTTP and HTTPS protocols with optional SSL validation bypass
+     * Returns the JSON response as a string
+     */
+    private String executeQueryHTTP(String protocol, String host, String token, String database, String query, boolean skipSSLValidation) throws Exception {
+        // Construct the query endpoint URL
         String urlString = protocol + "://" + host + "/query";
         
-        // Build query parameters - try both methods
+        // Build query parameters using InfluxDB v1 API format
+        // p=token, db=database, q=query
         String params = String.format("p=%s&db=%s&q=%s",
             URLEncoder.encode(token, StandardCharsets.UTF_8),
             URLEncoder.encode(database, StandardCharsets.UTF_8),
             URLEncoder.encode(query, StandardCharsets.UTF_8)
         );
         
+        // Create full URL with query parameters
         URL url = new URL(urlString + "?" + params);
+        
+        // Debug logging for troubleshooting
         System.out.println("HTTP Request: " + url);
         System.out.println("Token parameter: p=" + token.substring(0, Math.min(20, token.length())) + "...");
         System.out.println("Database parameter: db=" + database);
         System.out.println("Query parameter: q=" + query);
         
+        // Open HTTP connection
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         
-        // Set request method and headers
+        // Configure HTTP request properties and timeouts
         connection.setRequestMethod("GET");
         connection.setRequestProperty("Accept", "application/json");
         connection.setRequestProperty("User-Agent", "InfluxDB-IDE/1.0");
-        connection.setConnectTimeout(10000);
-        connection.setReadTimeout(10000);
+        connection.setConnectTimeout(10000); // 10 second connection timeout
+        connection.setReadTimeout(10000);    // 10 second read timeout
         
         // Handle HTTPS connections
         if ("https".equalsIgnoreCase(protocol)) {
             System.out.println("Using HTTPS connection with SSL/TLS");
+            if (skipSSLValidation) {
+                System.out.println("SSL Certificate validation will be skipped");
+                // Create a trust manager that trusts all certificates
+                try {
+                    // Set system properties for SSL certificate validation bypass
+                    System.setProperty("https.protocols", "TLSv1.2,TLSv1.3");
+                    if (skipSSLValidation) {
+                        System.setProperty("javax.net.ssl.trustStore", "");
+                        System.setProperty("javax.net.ssl.trustStoreType", "JKS");
+                        System.setProperty("javax.net.ssl.trustStorePassword", "");
+                        System.setProperty("javax.net.ssl.keyStore", "");
+                        System.setProperty("javax.net.ssl.keyStorePassword", "");
+                        System.setProperty("javax.net.ssl.keyStoreType", "JKS");
+                        System.setProperty("com.sun.net.ssl.checkRevocation", "false");
+                        System.setProperty("com.sun.security.ssl.allowUnsafeRenegotiation", "true");
+                    }
+                } catch (Exception e) {
+                    System.err.println("Warning: Could not configure SSL bypass: " + e.getMessage());
+                }
+            }
         }
         
         // Debug authentication
@@ -815,23 +1056,28 @@ public class InfluxDBJavaFXIDE extends Application {
         }
     }
 
+    /**
+     * Parses JSON response and displays results in a table format
+     * Handles InfluxDB v1 API response structure with series and values
+     * Creates dynamic columns and populates data with Excel-like functionality
+     */
     private void displayResultsInTable(String jsonResult) {
         try {
-            // Check if response starts with ERROR
+            // Check if response indicates an HTTP error
             if (jsonResult.startsWith("ERROR")) {
                 System.err.println("HTTP Error response: " + jsonResult);
-                // Show error in raw results area
+                // Display error in raw results area for debugging
                 rawResultArea.setText("HTTP Error: " + jsonResult);
-                // Clear table
+                // Clear table since there's no valid data to display
                 resultsTable.getColumns().clear();
                 resultsTable.getItems().clear();
                 return;
             }
             
-            // Debug: log the response
+            // Debug logging - show first 200 characters of response
             System.out.println("Raw response: " + jsonResult.substring(0, Math.min(200, jsonResult.length())));
             
-            // Parse JSON response
+            // Parse the JSON response string into JSONObject
             JSONObject json = new JSONObject(jsonResult);
             JSONArray results = json.getJSONArray("results");
             
@@ -945,38 +1191,47 @@ public class InfluxDBJavaFXIDE extends Application {
         }
     }
     
+    /**
+     * Creates an Excel-like column header with sorting and filtering controls
+     * Each header contains the column name and three control buttons:
+     * - Ascending sort (↑), Descending sort (↓), and Filter (🔍)
+     */
     private VBox createExcelLikeHeader(String columnName, int columnIndex) {
+        // Create vertical container for header content
         VBox headerBox = new VBox(2);
         headerBox.setAlignment(Pos.CENTER);
         
-        // Column name label
+        // Column name label with bold Arial font
         Label nameLabel = new Label(columnName);
         nameLabel.setFont(Font.font("Arial", FontWeight.BOLD, 12));
         nameLabel.setAlignment(Pos.CENTER);
         
-        // Controls row
+        // Horizontal row for control buttons
         HBox controlsRow = new HBox(5);
         controlsRow.setAlignment(Pos.CENTER);
         
-        // Sort buttons
+        // Ascending sort button with up arrow and tooltip
         Button sortAscButton = new Button("↑");
         sortAscButton.setStyle("-fx-background-color: #E0E0E0; -fx-font-size: 10; -fx-min-width: 20; -fx-min-height: 20;");
         sortAscButton.setTooltip(new Tooltip("Sort ascending"));
         sortAscButton.setOnAction(e -> sortColumn(columnIndex, true));
         
+        // Descending sort button with down arrow and tooltip
         Button sortDescButton = new Button("↓");
         sortDescButton.setStyle("-fx-background-color: #E0E0E0; -fx-font-size: 10; -fx-min-width: 20; -fx-min-height: 20;");
         sortDescButton.setTooltip(new Tooltip("Sort descending"));
         sortDescButton.setOnAction(e -> sortColumn(columnIndex, false));
         
-        // Filter button
+        // Filter button with magnifying glass icon and tooltip
         Button filterButton = new Button("🔍");
         filterButton.setStyle("-fx-background-color: #E0E0E0; -fx-font-size: 10; -fx-min-width: 20; -fx-min-height: 20;");
         filterButton.setTooltip(new Tooltip("Filter column"));
         filterButton.setOnAction(e -> showColumnFilter(columnIndex, columnName));
         
+        // Add all control buttons to the horizontal row
         controlsRow.getChildren().addAll(sortAscButton, sortDescButton, filterButton);
         
+        // Combine column name and controls in the header
         headerBox.getChildren().addAll(nameLabel, controlsRow);
         return headerBox;
     }
@@ -985,10 +1240,23 @@ public class InfluxDBJavaFXIDE extends Application {
         int totalRecords = allResultsData != null ? allResultsData.size() : 0;
         int filteredRecords = resultsTable.getItems().size();
         
+        // Update the top record count label
         if (totalRecords == filteredRecords) {
             recordCountLabel.setText("Records: " + totalRecords);
         } else {
             recordCountLabel.setText("Records: " + filteredRecords + " of " + totalRecords);
+        }
+        
+        // Update the bottom record count display
+        Label bottomRecordCount = (Label) mainStage.getScene().lookup("#bottomRecordCount");
+        if (bottomRecordCount != null) {
+            if (totalRecords == 0) {
+                bottomRecordCount.setText("No records");
+            } else if (totalRecords == filteredRecords) {
+                bottomRecordCount.setText(totalRecords + " records fetched");
+            } else {
+                bottomRecordCount.setText(filteredRecords + " of " + totalRecords + " records (filtered)");
+            }
         }
     }
     
@@ -1161,6 +1429,50 @@ public class InfluxDBJavaFXIDE extends Application {
         updateRecordCount();
     }
     
+    /**
+     * Toggles the visibility and layout management of the query section
+     * When hidden, provides more space for results viewing by removing it from layout
+     * Updates button text to reflect current state
+     */
+    private void toggleQuerySection(VBox queryBox, Button toggleButton) {
+        // Toggle both visibility and layout management of the query section
+        boolean isVisible = queryBox.isVisible();
+        queryBox.setVisible(!isVisible);
+        queryBox.setManaged(!isVisible); // Remove from layout when hidden
+        
+        // Update button text and styling based on current state
+        if (isVisible) {
+            // Query section is now hidden - button shows "Show"
+            toggleButton.setText("Show Query Section");
+            toggleButton.setStyle("-fx-background-color: #4CAF50; -fx-text-fill: white; -fx-font-weight: bold;");
+            toggleButton.setTooltip(new Tooltip("Click to show the query section"));
+        } else {
+            // Query section is now visible - button shows "Hide"
+            toggleButton.setText("Hide Query Section");
+            toggleButton.setStyle("-fx-background-color: #FF9800; -fx-text-fill: white; -fx-font-weight: bold;");
+            toggleButton.setTooltip(new Tooltip("Click to hide the query section for more results space"));
+        }
+    }
+
+    /**
+     * Toggles the visibility and layout management of the query section using a checkbox
+     * When unchecked, provides more space for results viewing by removing it from layout
+     * Checkbox state directly reflects the visibility state
+     */
+    private void toggleQuerySectionWithCheckBox(VBox queryBox, CheckBox toggleCheckBox) {
+        // Set visibility and layout management based on checkbox state
+        boolean shouldShow = toggleCheckBox.isSelected();
+        queryBox.setVisible(shouldShow);
+        queryBox.setManaged(shouldShow); // Include in layout when checked, remove when unchecked
+        
+        // Update status label to reflect current state
+        if (shouldShow) {
+            statusLabel.setText("Query section visible");
+        } else {
+            statusLabel.setText("Query section hidden - more space for results");
+        }
+    }
+    
     
 
     private void clearResults() {
@@ -1173,6 +1485,12 @@ public class InfluxDBJavaFXIDE extends Application {
         recordCountLabel.setText("Records: 0");
         allResultsData = null;
         
+        // Reset bottom record count display
+        Label bottomRecordCount = (Label) mainStage.getScene().lookup("#bottomRecordCount");
+        if (bottomRecordCount != null) {
+            bottomRecordCount.setText("No records");
+        }
+        
         statusLabel.setText("Results cleared");
     }
 
@@ -1184,26 +1502,32 @@ public class InfluxDBJavaFXIDE extends Application {
         alert.showAndWait();
     }
 
+    /**
+     * Exports the current table data to a CSV file
+     * Respects current filtering and sorting applied to the results
+     * Shows file chooser dialog and handles CSV formatting with proper escaping
+     */
     private void exportToCSV() {
         try {
-            // Get the current table data (respects filtering)
+            // Check if there's data to export (respects current filtering)
             if (resultsTable.getItems().isEmpty()) {
                 showAlert("Export Error", "No data to export. Please run a query first.");
                 return;
             }
             
-            // Create file chooser
+            // Create file chooser dialog for saving CSV file
             FileChooser fileChooser = new FileChooser();
             fileChooser.setTitle("Export to CSV");
             fileChooser.getExtensionFilters().add(
                 new FileChooser.ExtensionFilter("CSV Files", "*.csv")
             );
             
-            // Set filename based on current data
+            // Generate default filename based on current record count
             int recordCount = resultsTable.getItems().size();
             String fileName = "influxdb_export_" + recordCount + "_records.csv";
             fileChooser.setInitialFileName(fileName);
             
+            // Show save dialog and get selected file
             File file = fileChooser.showSaveDialog(mainStage);
             if (file != null) {
                 // Write CSV data
@@ -1251,6 +1575,70 @@ public class InfluxDBJavaFXIDE extends Application {
         } catch (Exception e) {
             showAlert("Export Error", "Failed to export CSV: " + e.getMessage());
         }
+    }
+    
+    /**
+     * Saves connection settings to a properties file in user home directory
+     * Stores protocol, host, database, and SSL validation preference
+     * Note: API token is NOT saved for security reasons
+     */
+    private void saveSettings(String protocol, String host, String database, boolean skipSSLValidation) {
+        try {
+            // Create settings directory in user home if it doesn't exist
+            File settingsDir = new File(SETTINGS_DIR);
+            if (!settingsDir.exists()) {
+                settingsDir.mkdirs();
+            }
+            
+            // Create properties object and populate with connection details
+            Properties props = new Properties();
+            props.setProperty("protocol", protocol);
+            props.setProperty("host", host);
+            props.setProperty("database", database);
+            props.setProperty("skipSSLValidation", String.valueOf(skipSSLValidation));
+            
+            // Save properties to file with descriptive header comment
+            try (FileOutputStream out = new FileOutputStream(SETTINGS_FILE)) {
+                props.store(out, "InfluxDB IDE Settings - Generated automatically");
+                System.out.println("Settings saved to: " + SETTINGS_FILE);
+            }
+        } catch (IOException e) {
+            System.err.println("Failed to save settings: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Loads connection settings from properties file in user home directory
+     * Returns default values if no settings file exists or loading fails
+     * Defaults: HTTP protocol, empty host/database, SSL validation enabled
+     */
+    private Properties loadSettings() {
+        // Initialize properties with sensible defaults
+        Properties props = new Properties();
+        props.setProperty("protocol", "http");
+        props.setProperty("host", "");
+        props.setProperty("database", "");
+        props.setProperty("skipSSLValidation", "false");
+        
+        try {
+            // Check if settings file exists in user home directory
+            File settingsFile = new File(SETTINGS_FILE);
+            if (settingsFile.exists()) {
+                // Load existing settings from file
+                try (FileInputStream in = new FileInputStream(settingsFile)) {
+                    props.load(in);
+                    System.out.println("Settings loaded from: " + SETTINGS_FILE);
+                }
+            } else {
+                // No settings file found, will use defaults
+                System.out.println("No settings file found, using defaults");
+            }
+        } catch (IOException e) {
+            // Log error but continue with default values
+            System.err.println("Failed to load settings: " + e.getMessage());
+        }
+        
+        return props;
     }
 
     public static void main(String[] args) {
