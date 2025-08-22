@@ -445,6 +445,10 @@ public class InfluxDBJavaFXIDE extends Application {
         mainStage.setScene(scene);
         mainStage.setMinWidth(900);
         mainStage.setMinHeight(700);
+        
+        // Maximize the main window for better query and results viewing
+        mainStage.setMaximized(true);
+        
         mainStage.show();
     }
 
@@ -731,6 +735,14 @@ public class InfluxDBJavaFXIDE extends Application {
         
         databaseMenu.getItems().add(showTablesItem);
         
+        // View Menu
+        Menu viewMenu = new Menu("View");
+        
+        MenuItem toggleMaximizeItem = new MenuItem("Toggle Maximize");
+        toggleMaximizeItem.setOnAction(e -> toggleMaximize());
+        
+        viewMenu.getItems().add(toggleMaximizeItem);
+        
         // Help Menu
         Menu helpMenu = new Menu("Help");
         
@@ -739,8 +751,25 @@ public class InfluxDBJavaFXIDE extends Application {
         
         helpMenu.getItems().add(aboutItem);
         
-        menuBar.getMenus().addAll(databaseMenu, helpMenu);
+        menuBar.getMenus().addAll(databaseMenu, viewMenu, helpMenu);
         return menuBar;
+    }
+    
+    /**
+     * Toggles between maximized and normal window mode
+     * Provides users with flexibility to choose their preferred window size
+     */
+    private void toggleMaximize() {
+        if (mainStage.isMaximized()) {
+            mainStage.setMaximized(false);
+            // Set a reasonable default size when un-maximizing
+            mainStage.setWidth(1200);
+            mainStage.setHeight(900);
+            // Center the window on screen
+            mainStage.centerOnScreen();
+        } else {
+            mainStage.setMaximized(true);
+        }
     }
 
     private void showConnectionErrorDialog(String errorDetails) {
@@ -905,6 +934,11 @@ public class InfluxDBJavaFXIDE extends Application {
         // Execute query asynchronously to prevent UI freezing
         CompletableFuture.supplyAsync(() -> {
             try {
+                // Update status to show query is being processed
+                javafx.application.Platform.runLater(() -> {
+                    statusLabel.setText("Connecting to InfluxDB...");
+                });
+                
                 return executeQueryHTTP(protocol, host, token, database, query, skipSSLValidation);
             } catch (Exception ex) {
                 return "Error: " + ex.getMessage();
@@ -927,6 +961,24 @@ public class InfluxDBJavaFXIDE extends Application {
                 progressIndicator.setVisible(false);
                 statusLabel.setText("Query completed");
             });
+        }).exceptionally(throwable -> {
+            // Handle any exceptions that occur during execution
+            javafx.application.Platform.runLater(() -> {
+                executeButton.setDisable(false);
+                progressIndicator.setVisible(false);
+                statusLabel.setText("Query failed");
+                
+                // Show error in raw results area
+                rawResultArea.setText("Query execution failed: " + throwable.getMessage());
+                
+                // Clear table
+                resultsTable.getColumns().clear();
+                resultsTable.getItems().clear();
+                
+                // Show error dialog
+                showAlert("Query Error", "Failed to execute query: " + throwable.getMessage());
+            });
+            return null;
         });
     }
 
@@ -1506,6 +1558,7 @@ public class InfluxDBJavaFXIDE extends Application {
      * Exports the current table data to a CSV file
      * Respects current filtering and sorting applied to the results
      * Shows file chooser dialog and handles CSV formatting with proper escaping
+     * Uses multi-threading to keep UI responsive during export
      */
     private void exportToCSV() {
         try {
@@ -1530,46 +1583,68 @@ public class InfluxDBJavaFXIDE extends Application {
             // Show save dialog and get selected file
             File file = fileChooser.showSaveDialog(mainStage);
             if (file != null) {
-                // Write CSV data
-                try (java.io.PrintWriter writer = new java.io.PrintWriter(file)) {
-                    // Write header
-                    StringBuilder header = new StringBuilder();
-                    for (TableColumn<ObservableList<String>, ?> column : resultsTable.getColumns()) {
-                        if (header.length() > 0) header.append(",");
-                        header.append("\"").append(column.getText()).append("\"");
-                    }
-                    writer.println(header.toString());
-                    
-                    // Write data rows (current filtered/sorted data)
-                    for (ObservableList<String> row : resultsTable.getItems()) {
-                        StringBuilder csvRow = new StringBuilder();
-                        for (String cell : row) {
-                            if (csvRow.length() > 0) csvRow.append(",");
-                            // Escape quotes and wrap in quotes if contains comma or newline
-                            String escapedCell = cell.replace("\"", "\"\"");
-                            if (escapedCell.contains(",") || escapedCell.contains("\n") || escapedCell.contains("\"")) {
-                                csvRow.append("\"").append(escapedCell).append("\"");
-                            } else {
-                                csvRow.append(escapedCell);
+                // Show progress indicator and update status
+                progressIndicator.setVisible(true);
+                statusLabel.setText("Exporting CSV...");
+                
+                // Export CSV data in background thread to keep UI responsive
+                CompletableFuture.runAsync(() -> {
+                    try {
+                        // Write CSV data
+                        try (java.io.PrintWriter writer = new java.io.PrintWriter(file)) {
+                            // Write header
+                            StringBuilder header = new StringBuilder();
+                            for (TableColumn<ObservableList<String>, ?> column : resultsTable.getColumns()) {
+                                if (header.length() > 0) header.append(",");
+                                header.append("\"").append(column.getText()).append("\"");
+                            }
+                            writer.println(header.toString());
+                            
+                            // Write data rows (current filtered/sorted data)
+                            for (ObservableList<String> row : resultsTable.getItems()) {
+                                StringBuilder csvRow = new StringBuilder();
+                                for (String cell : row) {
+                                    if (csvRow.length() > 0) csvRow.append(",");
+                                    // Escape quotes and wrap in quotes if contains comma or newline
+                                    String escapedCell = cell.replace("\"", "\"\"");
+                                    if (escapedCell.contains(",") || escapedCell.contains("\n") || escapedCell.contains("\"")) {
+                                        csvRow.append("\"").append(escapedCell).append("\"");
+                                    } else {
+                                        csvRow.append(escapedCell);
+                                    }
+                                }
+                                writer.println(csvRow.toString());
                             }
                         }
-                        writer.println(csvRow.toString());
+                        
+                        // Update UI on JavaFX thread after successful export
+                        javafx.application.Platform.runLater(() -> {
+                            progressIndicator.setVisible(false);
+                            
+                            String exportMessage = "Data exported to CSV successfully: " + file.getName();
+                            if (allResultsData != null && allResultsData.size() != recordCount) {
+                                exportMessage += " (" + recordCount + " of " + allResultsData.size() + " records)";
+                            }
+                            statusLabel.setText(exportMessage);
+                            
+                            // Show success dialog
+                            Alert successAlert = new Alert(Alert.AlertType.INFORMATION);
+                            successAlert.setTitle("Export Successful");
+                            successAlert.setHeaderText("CSV Export Complete");
+                            successAlert.setContentText("Data has been successfully exported to:\n" + file.getAbsolutePath() + 
+                                "\n\nRecords exported: " + recordCount);
+                            successAlert.showAndWait();
+                        });
+                        
+                    } catch (Exception e) {
+                        // Handle export errors on JavaFX thread
+                        javafx.application.Platform.runLater(() -> {
+                            progressIndicator.setVisible(false);
+                            statusLabel.setText("Export failed");
+                            showAlert("Export Error", "Failed to export CSV: " + e.getMessage());
+                        });
                     }
-                }
-                
-                String exportMessage = "Data exported to CSV successfully: " + file.getName();
-                if (allResultsData != null && allResultsData.size() != recordCount) {
-                    exportMessage += " (" + recordCount + " of " + allResultsData.size() + " records)";
-                }
-                statusLabel.setText(exportMessage);
-                
-                // Show success dialog
-                Alert successAlert = new Alert(Alert.AlertType.INFORMATION);
-                successAlert.setTitle("Export Successful");
-                successAlert.setHeaderText("CSV Export Complete");
-                successAlert.setContentText("Data has been successfully exported to:\n" + file.getAbsolutePath() + 
-                    "\n\nRecords exported: " + recordCount);
-                successAlert.showAndWait();
+                });
                 
             }
         } catch (Exception e) {
