@@ -39,6 +39,12 @@ import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.util.Properties;
+import java.util.HashSet;
+import java.util.Set;
+import java.util.Iterator;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
 import javafx.scene.image.Image;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
@@ -946,9 +952,6 @@ public class InfluxDBJavaFXIDE extends Application {
         }).thenAcceptAsync(result -> {
             // Update UI on JavaFX thread
             javafx.application.Platform.runLater(() -> {
-                // Update raw JSON view
-                rawResultArea.setText(result);
-                
                 // Try to parse and display in table format
                 try {
                     displayResultsInTable(result);
@@ -1109,17 +1112,21 @@ public class InfluxDBJavaFXIDE extends Application {
     }
 
     /**
-     * Parses JSON response and displays results in a table format
-     * Handles InfluxDB v1 API response structure with series and values
+     * Parses JSON response and displays results in table format
+     * Handles multiple response formats:
+     * 1. InfluxDB v1 API response format with results/series structure
+     * 2. Direct array of objects (new format)
      * Creates dynamic columns and populates data with Excel-like functionality
+     * Always displays raw JSON in the JSON window for debugging
      */
     private void displayResultsInTable(String jsonResult) {
+        // ALWAYS display the raw JSON first for debugging and visibility
+        rawResultArea.setText(jsonResult);
+        
         try {
             // Check if response indicates an HTTP error
             if (jsonResult.startsWith("ERROR")) {
                 System.err.println("HTTP Error response: " + jsonResult);
-                // Display error in raw results area for debugging
-                rawResultArea.setText("HTTP Error: " + jsonResult);
                 // Clear table since there's no valid data to display
                 resultsTable.getColumns().clear();
                 resultsTable.getItems().clear();
@@ -1129,118 +1136,245 @@ public class InfluxDBJavaFXIDE extends Application {
             // Debug logging - show first 200 characters of response
             System.out.println("Raw response: " + jsonResult.substring(0, Math.min(200, jsonResult.length())));
             
-            // Parse the JSON response string into JSONObject
-            JSONObject json = new JSONObject(jsonResult);
-            JSONArray results = json.getJSONArray("results");
+            // Try to parse as direct array first (new format)
+            try {
+                JSONArray directArray = new JSONArray(jsonResult);
+                if (directArray.length() > 0) {
+                    // This is the new format - direct array of objects
+                    System.out.println("Detected direct array format with " + directArray.length() + " objects");
+                    parseDirectArrayFormat(directArray);
+                    return;
+                }
+            } catch (JSONException e) {
+                // Not a direct array, try InfluxDB v1 format
+                System.out.println("Not direct array format, trying InfluxDB v1 format");
+            }
             
-            if (results.length() > 0) {
-                JSONObject firstResult = results.getJSONObject(0);
-                
-                if (firstResult.has("series")) {
-                    JSONArray series = firstResult.getJSONArray("series");
+            // Try InfluxDB v1 format (results/series structure)
+            try {
+                JSONObject json = new JSONObject(jsonResult);
+                if (json.has("results")) {
+                    JSONArray results = json.getJSONArray("results");
                     
-                    if (series.length() > 0) {
-                        JSONObject firstSeries = series.getJSONObject(0);
+                    if (results.length() > 0) {
+                        JSONObject firstResult = results.getJSONObject(0);
                         
-                        // Check if series has error
-                        if (firstSeries.has("error")) {
-                            String errorMsg = firstSeries.getString("error");
-                            System.err.println("Series error: " + errorMsg);
-                            rawResultArea.setText("Query Error: " + errorMsg);
-                            resultsTable.getColumns().clear();
-                            resultsTable.getItems().clear();
-                            return;
-                        }
-                        
-                        JSONArray columns = firstSeries.getJSONArray("columns");
-                        JSONArray values = firstSeries.getJSONArray("values");
-                        
-                        // Clear existing table
-                        resultsTable.getColumns().clear();
-                        resultsTable.getItems().clear();
-                        
-                        // Create columns dynamically with Excel-like headers
-                        for (int i = 0; i < columns.length(); i++) {
-                            final int colIndex = i;
-                            String columnName = columns.getString(i);
+                        if (firstResult.has("series")) {
+                            JSONArray series = firstResult.getJSONArray("series");
                             
-                            // Create column header with sorting and filtering
-                            VBox headerBox = createExcelLikeHeader(columnName, colIndex);
-                            
-                            TableColumn<ObservableList<String>, String> column = new TableColumn<>();
-                            column.setGraphic(headerBox);
-                            column.setCellValueFactory(data -> {
-                                ObservableList<String> row = data.getValue();
-                                if (row != null && colIndex < row.size()) {
-                                    return new SimpleStringProperty(row.get(colIndex));
+                            if (series.length() > 0) {
+                                JSONObject firstSeries = series.getJSONObject(0);
+                                
+                                // Check if series has error
+                                if (firstSeries.has("error")) {
+                                    String errorMsg = firstSeries.getString("error");
+                                    System.err.println("Series error: " + errorMsg);
+                                    // Keep raw JSON visible, just clear table
+                                    resultsTable.getColumns().clear();
+                                    resultsTable.getItems().clear();
+                                    return;
                                 }
-                                return new SimpleStringProperty("");
-                            });
-                            
-                            // Make columns resizable
-                            column.setPrefWidth(180);
-                            column.setResizable(true);
-                            
-                            resultsTable.getColumns().add(column);
-                        }
-                        
-                        // Populate data
-                        allResultsData = FXCollections.observableArrayList();
-                        for (int i = 0; i < values.length(); i++) {
-                            JSONArray row = values.getJSONArray(i);
-                            ObservableList<String> rowData = FXCollections.observableArrayList();
-                            
-                            for (int j = 0; j < row.length(); j++) {
-                                Object value = row.get(j);
-                                rowData.add(value != null ? value.toString() : "");
+                                
+                                JSONArray columns = firstSeries.getJSONArray("columns");
+                                JSONArray values = firstSeries.getJSONArray("values");
+                                
+                                parseInfluxDBV1Format(columns, values);
+                                return;
+                            } else {
+                                // No series - this can happen with some queries like SHOW MEASUREMENTS
+                                System.out.println("No series in result - query may have returned no data");
+                                // Keep raw JSON visible, just clear table
+                                resultsTable.getColumns().clear();
+                                resultsTable.getItems().clear();
+                                return;
                             }
-                            
-                            allResultsData.add(rowData);
+                        } else {
+                            // No series field - check if there's an error message
+                            if (firstResult.has("error")) {
+                                String errorMsg = firstResult.getString("error");
+                                System.err.println("Result error: " + errorMsg);
+                                // Keep raw JSON visible, just clear table
+                                resultsTable.getColumns().clear();
+                                resultsTable.getItems().clear();
+                                return;
+                            } else {
+                                System.out.println("No series field in result");
+                                // Keep raw JSON visible, just clear table
+                                resultsTable.getColumns().clear();
+                                resultsTable.getItems().clear();
+                                return;
+                            }
                         }
-                        
-                        // Set data to table
-                        resultsTable.setItems(allResultsData);
-                        
-                        // Update record count
-                        updateRecordCount();
-                        
-                        // Switch to table tab
-                        resultsTabPane.getSelectionModel().select(0);
                     } else {
-                        // No series - this can happen with some queries like SHOW MEASUREMENTS
-                        System.out.println("No series in result - query may have returned no data");
-                        rawResultArea.setText("Query executed successfully but returned no data.\n\nRaw response:\n" + jsonResult);
+                        System.out.println("No results in response");
+                        // Keep raw JSON visible, just clear table
                         resultsTable.getColumns().clear();
                         resultsTable.getItems().clear();
-                    }
-                } else {
-                    // No series field - check if there's an error message
-                    if (firstResult.has("error")) {
-                        String errorMsg = firstResult.getString("error");
-                        System.err.println("Result error: " + errorMsg);
-                        rawResultArea.setText("Query Error: " + errorMsg);
-                        resultsTable.getColumns().clear();
-                        resultsTable.getItems().clear();
-                    } else {
-                        System.out.println("No series field in result");
-                        rawResultArea.setText("Query executed but no data structure found.\n\nRaw response:\n" + jsonResult);
-                        resultsTable.getColumns().clear();
-                        resultsTable.getItems().clear();
+                        return;
                     }
                 }
-            } else {
-                System.out.println("No results in response");
-                rawResultArea.setText("No results in response.\n\nRaw response:\n" + jsonResult);
-                resultsTable.getColumns().clear();
-                resultsTable.getItems().clear();
+            } catch (JSONException e) {
+                System.err.println("Error parsing InfluxDB v1 format: " + e.getMessage());
             }
-        } catch (JSONException e) {
-            System.err.println("Error parsing JSON: " + e.getMessage());
+            
+            // If we get here, we couldn't parse either format
+            System.err.println("Could not parse response in any known format");
+            // Keep raw JSON visible, just clear table
+            resultsTable.getColumns().clear();
+            resultsTable.getItems().clear();
+            
+        } catch (Exception e) {
+            System.err.println("Unexpected error parsing JSON: " + e.getMessage());
             System.err.println("Raw response that caused error: " + jsonResult);
-            rawResultArea.setText("JSON Parsing Error: " + e.getMessage() + "\n\nRaw response:\n" + jsonResult);
+            // Keep raw JSON visible, just clear table
             resultsTable.getColumns().clear();
             resultsTable.getItems().clear();
         }
+    }
+    
+    /**
+     * Parses the new direct array format where response is an array of objects
+     * Each object represents a row with key-value pairs
+     */
+    private void parseDirectArrayFormat(JSONArray array) {
+        if (array.length() == 0) {
+            System.out.println("Empty array received");
+            rawResultArea.setText("Query returned empty result set.");
+            resultsTable.getColumns().clear();
+            resultsTable.getItems().clear();
+            return;
+        }
+        
+        // Get the first object to determine column structure
+        JSONObject firstObject = array.getJSONObject(0);
+        Set<String> columnNames = new HashSet<>();
+        
+        // Collect all possible column names from all objects
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject obj = array.getJSONObject(i);
+            Iterator<String> keys = obj.keys();
+            while (keys.hasNext()) {
+                columnNames.add(keys.next());
+            }
+        }
+        
+        // Convert to sorted list for consistent column order
+        List<String> sortedColumns = new ArrayList<>(columnNames);
+        Collections.sort(sortedColumns);
+        
+        // Clear existing table
+        resultsTable.getColumns().clear();
+        resultsTable.getItems().clear();
+        
+        // Create columns dynamically with Excel-like headers
+        for (int i = 0; i < sortedColumns.size(); i++) {
+            final int colIndex = i;
+            String columnName = sortedColumns.get(i);
+            
+            // Create column header with sorting and filtering
+            VBox headerBox = createExcelLikeHeader(columnName, colIndex);
+            
+            TableColumn<ObservableList<String>, String> column = new TableColumn<>();
+            column.setGraphic(headerBox);
+            column.setCellValueFactory(data -> {
+                ObservableList<String> row = data.getValue();
+                if (row != null && colIndex < row.size()) {
+                    return new SimpleStringProperty(row.get(colIndex));
+                }
+                return new SimpleStringProperty("");
+            });
+            
+            // Make columns resizable
+            column.setPrefWidth(180);
+            column.setResizable(true);
+            
+            resultsTable.getColumns().add(column);
+        }
+        
+        // Populate data
+        allResultsData = FXCollections.observableArrayList();
+        for (int i = 0; i < array.length(); i++) {
+            JSONObject obj = array.getJSONObject(i);
+            ObservableList<String> rowData = FXCollections.observableArrayList();
+            
+            // Add values in the same order as columns
+            for (String columnName : sortedColumns) {
+                Object value = obj.opt(columnName);
+                rowData.add(value != null ? value.toString() : "");
+            }
+            
+            allResultsData.add(rowData);
+        }
+        
+        // Set data to table
+        resultsTable.setItems(allResultsData);
+        
+        // Update record count
+        updateRecordCount();
+        
+        // Switch to table tab
+        resultsTabPane.getSelectionModel().select(0);
+        
+        System.out.println("Successfully parsed direct array format with " + array.length() + " rows and " + sortedColumns.size() + " columns");
+    }
+    
+    /**
+     * Parses the traditional InfluxDB v1 format with columns and values arrays
+     */
+    private void parseInfluxDBV1Format(JSONArray columns, JSONArray values) {
+        // Clear existing table
+        resultsTable.getColumns().clear();
+        resultsTable.getItems().clear();
+        
+        // Create columns dynamically with Excel-like headers
+        for (int i = 0; i < columns.length(); i++) {
+            final int colIndex = i;
+            String columnName = columns.getString(i);
+            
+            // Create column header with sorting and filtering
+            VBox headerBox = createExcelLikeHeader(columnName, colIndex);
+            
+            TableColumn<ObservableList<String>, String> column = new TableColumn<>();
+            column.setGraphic(headerBox);
+            column.setCellValueFactory(data -> {
+                ObservableList<String> row = data.getValue();
+                if (row != null && colIndex < row.size()) {
+                    return new SimpleStringProperty(row.get(colIndex));
+                }
+                return new SimpleStringProperty("");
+            });
+            
+            // Make columns resizable
+            column.setPrefWidth(180);
+            column.setResizable(true);
+            
+            resultsTable.getColumns().add(column);
+        }
+        
+        // Populate data
+        allResultsData = FXCollections.observableArrayList();
+        for (int i = 0; i < values.length(); i++) {
+            JSONArray row = values.getJSONArray(i);
+            ObservableList<String> rowData = FXCollections.observableArrayList();
+            
+            for (int j = 0; j < row.length(); j++) {
+                Object value = row.get(j);
+                rowData.add(value != null ? value.toString() : "");
+            }
+            
+            allResultsData.add(rowData);
+        }
+        
+        // Set data to table
+        resultsTable.setItems(allResultsData);
+        
+        // Update record count
+        updateRecordCount();
+        
+        // Switch to table tab
+        resultsTabPane.getSelectionModel().select(0);
+        
+        System.out.println("Successfully parsed InfluxDB v1 format with " + values.length() + " rows and " + columns.length() + " columns");
     }
     
     /**
