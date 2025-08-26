@@ -202,6 +202,18 @@ public class InfluxDBJavaFXIDE extends Application {
         // Set initial SSL box visibility based on loaded protocol
         sslBox.setVisible("https".equals(savedSettings.getProperty("protocol", "http")));
 
+        // Timeout configuration
+        HBox timeoutBox = new HBox(10);
+        timeoutBox.setAlignment(Pos.CENTER_LEFT);
+        Label timeoutLabel = new Label("Query Timeout:");
+        timeoutLabel.setMinWidth(100);
+        ComboBox<String> timeoutCombo = new ComboBox<>();
+        timeoutCombo.getItems().addAll("30 seconds", "1 minute", "2 minutes", "5 minutes", "10 minutes");
+        timeoutCombo.setValue(savedSettings.getProperty("queryTimeout", "2 minutes"));
+        timeoutCombo.setPrefWidth(150);
+        timeoutCombo.setTooltip(new Tooltip("Maximum time to wait for query results"));
+        timeoutBox.getChildren().addAll(timeoutLabel, timeoutCombo);
+
         // Host field
         HBox hostBox = new HBox(10);
         hostBox.setAlignment(Pos.CENTER_LEFT);
@@ -258,7 +270,7 @@ public class InfluxDBJavaFXIDE extends Application {
         buttonBox.setAlignment(Pos.CENTER);
         buttonBox.getChildren().addAll(testButton, connectButton);
 
-        formBox.getChildren().addAll(protocolBox, sslBox, hostBox, dbBox, tokenBox, authNote, settingsNote, buttonBox);
+        formBox.getChildren().addAll(protocolBox, sslBox, timeoutBox, hostBox, dbBox, tokenBox, authNote, settingsNote, buttonBox);
 
         // Status label
         Label statusLabel = new Label("Enter your InfluxDB connection details");
@@ -368,7 +380,7 @@ public class InfluxDBJavaFXIDE extends Application {
                         statusLabel.setTextFill(Color.GREEN);
                         
                         // Save settings for next time (excluding token for security)
-                        saveSettings(this.protocol, this.host, this.database, this.skipSSLValidation);
+                        saveSettings(this.protocol, this.host, this.database, this.skipSSLValidation, "2 minutes");
                         
                         connectionStage.close();
                     }
@@ -945,6 +957,13 @@ public class InfluxDBJavaFXIDE extends Application {
                     statusLabel.setText("Connecting to InfluxDB...");
                 });
                 
+                // Add a delay to show the connection status
+                Thread.sleep(1000);
+                
+                javafx.application.Platform.runLater(() -> {
+                    statusLabel.setText("Executing query (this may take a few minutes for large datasets)...");
+                });
+                
                 return executeQueryHTTP(protocol, host, token, database, query, skipSSLValidation);
             } catch (Exception ex) {
                 return "Error: " + ex.getMessage();
@@ -1018,8 +1037,12 @@ public class InfluxDBJavaFXIDE extends Application {
         connection.setRequestMethod("GET");
         connection.setRequestProperty("Accept", "application/json");
         connection.setRequestProperty("User-Agent", "InfluxDB-IDE/1.0");
-        connection.setConnectTimeout(10000); // 10 second connection timeout
-        connection.setReadTimeout(10000);    // 10 second read timeout
+        connection.setConnectTimeout(30000); // 30 second connection timeout
+        
+        // Get timeout from settings and convert to milliseconds
+        int readTimeoutMs = getTimeoutInMilliseconds();
+        connection.setReadTimeout(readTimeoutMs);
+        System.out.println("Setting read timeout to: " + readTimeoutMs + "ms (" + (readTimeoutMs/1000) + " seconds)");
         
         // Handle HTTPS connections
         if ("https".equalsIgnoreCase(protocol)) {
@@ -1791,7 +1814,7 @@ public class InfluxDBJavaFXIDE extends Application {
      * Stores protocol, host, database, and SSL validation preference
      * Note: API token is NOT saved for security reasons
      */
-    private void saveSettings(String protocol, String host, String database, boolean skipSSLValidation) {
+    private void saveSettings(String protocol, String host, String database, boolean skipSSLValidation, String queryTimeout) {
         try {
             // Create settings directory in user home if it doesn't exist
             File settingsDir = new File(SETTINGS_DIR);
@@ -1805,6 +1828,7 @@ public class InfluxDBJavaFXIDE extends Application {
             props.setProperty("host", host);
             props.setProperty("database", database);
             props.setProperty("skipSSLValidation", String.valueOf(skipSSLValidation));
+            props.setProperty("queryTimeout", queryTimeout);
             
             // Save properties to file with descriptive header comment
             try (FileOutputStream out = new FileOutputStream(SETTINGS_FILE)) {
@@ -1828,6 +1852,7 @@ public class InfluxDBJavaFXIDE extends Application {
         props.setProperty("host", "");
         props.setProperty("database", "");
         props.setProperty("skipSSLValidation", "false");
+        props.setProperty("queryTimeout", "2 minutes");
         
         try {
             // Check if settings file exists in user home directory
@@ -1848,6 +1873,26 @@ public class InfluxDBJavaFXIDE extends Application {
         }
         
         return props;
+    }
+    
+    /**
+     * Converts timeout string from settings to milliseconds
+     * Supports: "30 seconds", "1 minute", "2 minutes", "5 minutes", "10 minutes"
+     */
+    private int getTimeoutInMilliseconds() {
+        Properties settings = loadSettings();
+        String timeoutStr = settings.getProperty("queryTimeout", "2 minutes");
+        
+        if (timeoutStr.contains("second")) {
+            int seconds = Integer.parseInt(timeoutStr.replaceAll("[^0-9]", ""));
+            return seconds * 1000;
+        } else if (timeoutStr.contains("minute")) {
+            int minutes = Integer.parseInt(timeoutStr.replaceAll("[^0-9]", ""));
+            return minutes * 60 * 1000;
+        } else {
+            // Default to 2 minutes if parsing fails
+            return 120000;
+        }
     }
 
     public static void main(String[] args) {
