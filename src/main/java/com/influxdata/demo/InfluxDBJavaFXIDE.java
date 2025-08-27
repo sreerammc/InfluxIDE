@@ -71,9 +71,11 @@ public class InfluxDBJavaFXIDE extends Application {
     private ObservableList<ObservableList<String>> allResultsData;
     private Button executeButton;
     private Button clearButton;
+    private Button showQueryButton;
     private Label statusLabel;
     private ProgressIndicator progressIndicator;
     private Stage mainStage;
+    private String lastExecutedQuery = "";
     
     // InfluxDB 3 Java API client
     private com.influxdb.v3.client.InfluxDBClient influxDB3Client;
@@ -582,10 +584,20 @@ public class InfluxDBJavaFXIDE extends Application {
         executeButton.setPrefHeight(40); // Fixed height to match initial query area height
         executeButton.setAlignment(Pos.CENTER);
         
+        // Show Query button with blue styling
+        showQueryButton = new Button("Show Query");
+        showQueryButton.setStyle("-fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;");
+        showQueryButton.setPrefWidth(100);
+        showQueryButton.setPrefHeight(40); // Fixed height to match initial query area height
+        showQueryButton.setAlignment(Pos.CENTER);
+        showQueryButton.setOnAction(e -> showLastExecutedQuery());
+        showQueryButton.setDisable(true); // Initially disabled until a query is executed
+        showQueryButton.setTooltip(new Tooltip("Show the last executed query for debugging and reference"));
+        
         // Note: Button height is now fixed, users can resize query area independently
         
         // Add components to horizontal row
-        queryRow.getChildren().addAll(queryArea, executeButton);
+        queryRow.getChildren().addAll(queryArea, executeButton, showQueryButton);
 
         // Add header row and query row to main container
         queryBox.getChildren().addAll(headerRow, queryRow);
@@ -978,9 +990,13 @@ public class InfluxDBJavaFXIDE extends Application {
             showAlert("Input Error", "Please enter a query.");
             return;
         }
+        
+        // Store the last executed query for the Show Query feature
+        lastExecutedQuery = query;
 
         // Update UI state to show query is executing
         executeButton.setDisable(true);
+        showQueryButton.setDisable(true); // Disable Show Query button during execution
         progressIndicator.setVisible(true);
         statusLabel.setText("Executing query...");
         
@@ -1025,6 +1041,7 @@ public class InfluxDBJavaFXIDE extends Application {
                 }
                 
                 executeButton.setDisable(false);
+                showQueryButton.setDisable(false); // Enable Show Query button after successful execution
                 progressIndicator.setVisible(false);
                 statusLabel.setText("Query completed");
             });
@@ -1032,6 +1049,7 @@ public class InfluxDBJavaFXIDE extends Application {
             // Handle any exceptions that occur during execution
             javafx.application.Platform.runLater(() -> {
                 executeButton.setDisable(false);
+                showQueryButton.setDisable(false); // Enable Show Query button even if query failed
                 progressIndicator.setVisible(false);
                 statusLabel.setText("Query failed");
                 
@@ -1835,6 +1853,67 @@ public class InfluxDBJavaFXIDE extends Application {
         alert.setHeaderText(null);
         alert.setContentText(message);
         alert.showAndWait();
+    }
+    
+    /**
+     * Shows the last executed query in a dialog
+     * Useful for debugging and understanding what query was sent to the database
+     */
+    private void showLastExecutedQuery() {
+        if (lastExecutedQuery.isEmpty()) {
+            showAlert("No Query", "No query has been executed yet. Please run a query first.");
+            return;
+        }
+        
+        // Create a custom dialog to show the query
+        Dialog<String> dialog = new Dialog<>();
+        dialog.setTitle("Last Executed Query");
+        dialog.setHeaderText("Query that was sent to InfluxDB:");
+        dialog.setResizable(true);
+        
+        // Set the dialog size
+        dialog.setWidth(800);
+        dialog.setHeight(400);
+        
+        // Create the content area
+        VBox content = new VBox(10);
+        content.setPadding(new Insets(20));
+        
+        // Add query text area
+        TextArea queryTextArea = new TextArea(lastExecutedQuery);
+        queryTextArea.setEditable(false);
+        queryTextArea.setWrapText(true);
+        queryTextArea.setPrefRowCount(15);
+        queryTextArea.setFont(Font.font("Consolas", 12));
+        queryTextArea.setStyle("-fx-background-color: #f8f9fa; -fx-border-color: #dee2e6; -fx-border-radius: 4;");
+        
+        // Add copy button
+        Button copyButton = new Button("Copy Query");
+        copyButton.setStyle("-fx-background-color: #28a745; -fx-text-fill: white; -fx-font-weight: bold;");
+        copyButton.setOnAction(e -> {
+            final ClipboardContent content2 = new ClipboardContent();
+            content2.putString(lastExecutedQuery);
+            javafx.scene.input.Clipboard.getSystemClipboard().setContent(content2);
+        });
+        
+        // Add close button
+        Button closeButton = new Button("Close");
+        closeButton.setStyle("-fx-background-color: #6c757d; -fx-text-fill: white;");
+        closeButton.setOnAction(e -> dialog.close());
+        
+        // Button layout
+        HBox buttonBox = new HBox(10);
+        buttonBox.setAlignment(Pos.CENTER_RIGHT);
+        buttonBox.getChildren().addAll(copyButton, closeButton);
+        
+        content.getChildren().addAll(queryTextArea, buttonBox);
+        dialog.getDialogPane().setContent(content);
+        
+        // Set the result converter
+        dialog.setResultConverter(dialogButton -> null);
+        
+        // Show the dialog
+        dialog.showAndWait();
     }
 
     /**
