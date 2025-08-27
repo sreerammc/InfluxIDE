@@ -224,7 +224,7 @@ public class InfluxDBJavaFXIDE extends Application {
         apiTypeCombo.getItems().addAll("Flight SQL", "InfluxDB 3 Java API", "REST API");
         apiTypeCombo.setValue(savedSettings.getProperty("apiType", "Flight SQL"));
         apiTypeCombo.setPrefWidth(200);
-        apiTypeCombo.setTooltip(new Tooltip("Flight SQL: Best performance with JDBC driver and Apache Arrow (Default) - Note: Requires InfluxDB 3.x with Flight SQL enabled, InfluxDB 3 Java API: Legacy Java client, REST API: Traditional HTTP queries"));
+        apiTypeCombo.setTooltip(new Tooltip("Flight SQL: Best performance with JDBC driver and Apache Arrow (Default) - Note: Requires InfluxDB 3.x with Flight SQL enabled. The app will try multiple endpoints: /flight, /arrow-flight, or direct host. If Flight SQL fails, it automatically falls back to REST API. InfluxDB 3 Java API: Legacy Java client, REST API: Traditional HTTP queries"));
         apiTypeBox.getChildren().addAll(apiTypeLabel, apiTypeCombo);
 
         // Timeout configuration
@@ -1249,28 +1249,41 @@ public class InfluxDBJavaFXIDE extends Application {
      */
     private String executeQueryFlightSQLJDBC(String protocol, String host, String token, String database, String query, boolean skipSSLValidation) throws Exception {
         try {
-            // Construct the JDBC connection URL
-            // Flight SQL typically uses port 443 for HTTPS or 80 for HTTP
-            // For InfluxDB 3.x, Flight SQL is usually on a different port than HTTP API
-            String jdbcUrl;
-            if ("https".equalsIgnoreCase(protocol)) {
-                // For HTTPS, use port 443 (default) or extract from host if specified
-                if (host.contains(":")) {
-                    jdbcUrl = "jdbc:arrow-flight://" + host + "?database=" + database + "&useEncryption=true";
-                } else {
-                    jdbcUrl = "jdbc:arrow-flight://" + host + ":443?database=" + database + "&useEncryption=true";
-                }
-            } else {
-                // For HTTP, use port 80 (default) or extract from host if specified
-                if (host.contains(":")) {
-                    jdbcUrl = "jdbc:arrow-flight://" + host + "?database=" + database + "&useEncryption=false";
-                } else {
-                    jdbcUrl = "jdbc:arrow-flight://" + host + ":80?database=" + database + "&useEncryption=false";
-                }
-            }
+            // Try multiple Flight SQL endpoints - Flight SQL typically uses different paths than REST API
+            String[] flightEndpoints = {
+                // Standard Flight SQL endpoint
+                host + "/flight",
+                // Alternative Flight SQL endpoint
+                host + "/arrow-flight",
+                // Direct host connection (for dedicated Flight SQL servers)
+                host
+            };
             
-            System.out.println("Flight SQL JDBC: Connecting to " + jdbcUrl);
-            System.out.println("Flight SQL JDBC: Protocol: " + protocol + ", Host: " + host);
+            Exception lastError = null;
+            
+            for (String endpoint : flightEndpoints) {
+                try {
+                    // Construct the JDBC connection URL
+                    String jdbcUrl;
+                    if ("https".equalsIgnoreCase(protocol)) {
+                        // For HTTPS, use port 443 (default) or extract from host if specified
+                        if (endpoint.contains(":")) {
+                            jdbcUrl = "jdbc:arrow-flight://" + endpoint + "?database=" + database + "&useEncryption=true";
+                        } else {
+                            jdbcUrl = "jdbc:arrow-flight://" + endpoint + ":443?database=" + database + "&useEncryption=true";
+                        }
+                    } else {
+                        // For HTTP, use port 80 (default) or extract from host if specified
+                        if (endpoint.contains(":")) {
+                            jdbcUrl = "jdbc:arrow-flight://" + endpoint + ":80?database=" + database + "&useEncryption=false";
+                        } else {
+                            jdbcUrl = "jdbc:arrow-flight://" + endpoint + ":80?database=" + database + "&useEncryption=false";
+                        }
+                    }
+                    
+                    System.out.println("Flight SQL JDBC: Trying endpoint: " + endpoint);
+                    System.out.println("Flight SQL JDBC: Connecting to " + jdbcUrl);
+                    System.out.println("Flight SQL JDBC: Protocol: " + protocol + ", Host: " + host);
             
             // Translate InfluxDB 1.x syntax to modern SQL syntax for Flight SQL
             String translatedQuery = translateQueryForInfluxDB3(query);
@@ -1347,22 +1360,29 @@ public class InfluxDBJavaFXIDE extends Application {
                     System.out.println("Flight SQL JDBC: Query successful, returned " + results.size() + " rows");
                     return result;
                 }
+                
+                // If we reach here, the query was successful
+                System.out.println("Flight SQL JDBC: Query successful on endpoint: " + endpoint);
+                return result;
+                
+            } catch (Exception endpointError) {
+                System.err.println("Flight SQL JDBC failed for endpoint " + endpoint + ": " + endpointError.getMessage());
+                lastError = endpointError;
+                // Continue to next endpoint
             }
-        } catch (Exception e) {
-            System.err.println("Flight SQL JDBC query failed: " + e.getMessage());
-            e.printStackTrace();
-            
-            // If Flight SQL fails, it might be because the server doesn't support it
-            // or it's on a different port. Let's provide a helpful error message.
-            if (e.getMessage().contains("UNAVAILABLE") || e.getMessage().contains("not an SSL/TLS record")) {
-                System.err.println("Flight SQL connection failed. This might be because:");
-                System.err.println("1. InfluxDB 3.x Flight SQL endpoint is not enabled");
-                System.err.println("2. Flight SQL is running on a different port (typically 4433 or 8082)");
-                System.err.println("3. The server doesn't support Flight SQL protocol");
-                System.err.println("Consider using REST API instead, or check your InfluxDB 3.x configuration.");
-            }
-            
-            throw e;
+        }
+        
+        // If all endpoints failed, throw the last error with helpful message
+        System.err.println("Flight SQL JDBC query failed for all endpoints. This usually means:");
+        System.err.println("1. Flight SQL is not enabled on this InfluxDB instance");
+        System.err.println("2. The Flight SQL endpoint is different from the query endpoint");
+        System.err.println("3. The server only supports HTTP/1.1, not HTTP/2 (required for Flight SQL)");
+        System.err.println("The application will automatically fall back to REST API for queries.");
+        
+        if (lastError != null) {
+            throw lastError;
+        } else {
+            throw new Exception("Flight SQL JDBC connection failed for all endpoints");
         }
     }
 
@@ -2412,47 +2432,73 @@ public class InfluxDBJavaFXIDE extends Application {
                 return "Error: Flight SQL JDBC requires JVM arguments: --add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED. Please restart the application with these arguments.";
             }
             
-            // Construct the JDBC connection URL
-            // Flight SQL typically uses port 443 for HTTPS or 80 for HTTP
-            String jdbcUrl;
-            if ("https".equalsIgnoreCase(protocol)) {
-                // For HTTPS, use port 443 (default) or extract from host if specified
-                if (host.contains(":")) {
-                    jdbcUrl = "jdbc:arrow-flight://" + host + "?database=" + database + "&useEncryption=true";
-                } else {
-                    jdbcUrl = "jdbc:arrow-flight://" + host + ":443?database=" + database + "&useEncryption=false";
-                }
-            } else {
-                // For HTTP, use port 80 (default) or extract from host if specified
-                if (host.contains(":")) {
-                    jdbcUrl = "jdbc:arrow-flight://" + host + "?database=" + database + "&useEncryption=false";
-                } else {
-                    jdbcUrl = "jdbc:arrow-flight://" + host + ":80?database=" + database + "&useEncryption=false";
-                }
-            }
+            // Try multiple Flight SQL endpoints - Flight SQL typically uses different paths than REST API
+            String[] flightEndpoints = {
+                // Standard Flight SQL endpoint
+                host + "/flight",
+                // Alternative Flight SQL endpoint
+                host + "/arrow-flight",
+                // Direct host connection (for dedicated Flight SQL servers)
+                host
+            };
             
-            System.out.println("Testing Flight SQL JDBC connection to: " + jdbcUrl);
-            System.out.println("Flight SQL JDBC: Protocol: " + protocol + ", Host: " + host);
-            
-            // Test JDBC connection
-            try (java.sql.Connection connection = java.sql.DriverManager.getConnection(jdbcUrl, "token", token)) {
-                // Test with a simple query - use SHOW TABLES for Flight SQL
-                String testQuery = "SHOW TABLES";
-                System.out.println("Testing query: " + testQuery);
-                
-                try (java.sql.Statement stmt = connection.createStatement();
-                     java.sql.ResultSet rs = stmt.executeQuery(testQuery)) {
-                    
-                    // Count results to verify connection works
-                    int resultCount = 0;
-                    while (rs.next()) {
-                        resultCount++;
+            for (String endpoint : flightEndpoints) {
+                try {
+                    String jdbcUrl;
+                    if ("https".equalsIgnoreCase(protocol)) {
+                        // For HTTPS, use port 443 (default) or extract from host if specified
+                        if (endpoint.contains(":")) {
+                            jdbcUrl = "jdbc:arrow-flight://" + endpoint + "?database=" + database + "&useEncryption=true";
+                        } else {
+                            jdbcUrl = "jdbc:arrow-flight://" + endpoint + ":443?database=" + database + "&useEncryption=true";
+                        }
+                    } else {
+                        // For HTTP, use port 80 (default) or extract from host if specified
+                        if (endpoint.contains(":")) {
+                            jdbcUrl = "jdbc:arrow-flight://" + endpoint + "?database=" + database + "&useEncryption=false";
+                        } else {
+                            jdbcUrl = "jdbc:arrow-flight://" + endpoint + ":80?database=" + database + "&useEncryption=false";
+                        }
                     }
                     
-                    System.out.println("Flight SQL JDBC test successful, got " + resultCount + " results");
-                    return "Success: Flight SQL JDBC connection established with " + resultCount + " tables";
+                    System.out.println("Testing Flight SQL JDBC connection to: " + jdbcUrl);
+                    System.out.println("Flight SQL JDBC: Protocol: " + protocol + ", Endpoint: " + endpoint);
+                    
+                    // Test JDBC connection with shorter timeout
+                    try (java.sql.Connection connection = java.sql.DriverManager.getConnection(jdbcUrl, "token", token)) {
+                        // Test with a simple query - use SHOW TABLES for Flight SQL
+                        String testQuery = "SHOW TABLES";
+                        System.out.println("Testing query: " + testQuery);
+                        
+                        try (java.sql.Statement stmt = connection.createStatement()) {
+                            // Set a shorter timeout for testing
+                            stmt.setQueryTimeout(10);
+                            
+                            try (java.sql.ResultSet rs = stmt.executeQuery(testQuery)) {
+                                // Count results to verify connection works
+                                int resultCount = 0;
+                                while (rs.next()) {
+                                    resultCount++;
+                                }
+                                
+                                System.out.println("Flight SQL JDBC test successful, got " + resultCount + " results");
+                                return "Success: Flight SQL JDBC connection established with " + resultCount + " tables";
+                            }
+                        }
+                    }
+                } catch (Exception endpointError) {
+                    System.err.println("Flight SQL JDBC failed for endpoint " + endpoint + ": " + endpointError.getMessage());
+                    // Continue to next endpoint
                 }
             }
+            
+            // If all endpoints failed, provide helpful error message
+            return "Error: Flight SQL JDBC connection failed for all endpoints. This usually means:\n" +
+                   "1. Flight SQL is not enabled on this InfluxDB instance\n" +
+                   "2. The Flight SQL endpoint is different from the query endpoint\n" +
+                   "3. The server only supports HTTP/1.1, not HTTP/2 (required for Flight SQL)\n" +
+                   "The application will automatically fall back to REST API for queries.";
+            
         } catch (Exception e) {
             System.err.println("Flight SQL JDBC connection test failed: " + e.getMessage());
             e.printStackTrace();
