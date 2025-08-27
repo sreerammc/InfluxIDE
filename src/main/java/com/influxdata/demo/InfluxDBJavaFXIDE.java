@@ -46,7 +46,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
-import java.util.stream.Stream;
+
 import javafx.scene.image.Image;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
@@ -56,7 +56,7 @@ public class InfluxDBJavaFXIDE extends Application {
 
     private String protocol = "http"; // Default to HTTP
     private boolean skipSSLValidation = false; // Default to strict SSL
-    private String apiType = "InfluxDB 3 Java API"; // Default to InfluxDB 3 Java API for better performance
+    private String apiType = "Flight SQL"; // Default to Flight SQL for best performance and modern SQL support
     private String host;
     private String database;
     private String token;
@@ -77,8 +77,7 @@ public class InfluxDBJavaFXIDE extends Application {
     private Stage mainStage;
     private CompletableFuture<String> runningQueryTask = null;
     
-    // InfluxDB 3 Java API client
-    private com.influxdb.v3.client.InfluxDBClient influxDB3Client;
+
     
     // Settings file constants
     private static final String SETTINGS_DIR = System.getProperty("user.home") + File.separator + ".influxdb-ide";
@@ -222,10 +221,10 @@ public class InfluxDBJavaFXIDE extends Application {
         Label apiTypeLabel = new Label("API Type:");
         apiTypeLabel.setMinWidth(100);
         ComboBox<String> apiTypeCombo = new ComboBox<>();
-        apiTypeCombo.getItems().addAll("InfluxDB 3 Java API", "REST API");
-        apiTypeCombo.setValue(savedSettings.getProperty("apiType", "InfluxDB 3 Java API"));
+        apiTypeCombo.getItems().addAll("Flight SQL", "InfluxDB 3 Java API", "REST API");
+        apiTypeCombo.setValue(savedSettings.getProperty("apiType", "Flight SQL"));
         apiTypeCombo.setPrefWidth(200);
-        apiTypeCombo.setTooltip(new Tooltip("InfluxDB 3 Java API: Better performance with Flight SQL and SHOW TABLES (Default), REST API: Traditional HTTP queries with SHOW MEASUREMENTS"));
+        apiTypeCombo.setTooltip(new Tooltip("Flight SQL: Best performance with JDBC driver and Apache Arrow (Default), InfluxDB 3 Java API: Legacy Java client, REST API: Traditional HTTP queries"));
         apiTypeBox.getChildren().addAll(apiTypeLabel, apiTypeCombo);
 
         // Timeout configuration
@@ -332,8 +331,8 @@ public class InfluxDBJavaFXIDE extends Application {
                     System.out.println("Test connection: Testing " + testProtocol + "://" + testHost + " with database " + testDatabase + " using " + testApiType);
                     
                     String result;
-                    if ("InfluxDB 3 Java API".equals(testApiType)) {
-                        result = testInfluxDB3Connection(testProtocol, testHost, testToken, testDatabase, testSkipSSL);
+                    if ("Flight SQL".equals(testApiType) || "InfluxDB 3 Java API".equals(testApiType)) {
+                        result = testFlightSQLJDBCConnection(testProtocol, testHost, testToken, testDatabase, testSkipSSL);
                     } else {
                         result = executeQueryHTTP(testProtocol, testHost, testToken, testDatabase, "SHOW MEASUREMENTS", testSkipSSL);
                     }
@@ -397,8 +396,8 @@ public class InfluxDBJavaFXIDE extends Application {
             // Validate connection asynchronously to keep UI responsive
             CompletableFuture.supplyAsync(() -> {
                 try {
-                    if ("InfluxDB 3 Java API".equals(this.apiType)) {
-                        return testInfluxDB3Connection(this.protocol, this.host, this.token, this.database, this.skipSSLValidation);
+                    if ("Flight SQL".equals(this.apiType) || "InfluxDB 3 Java API".equals(this.apiType)) {
+                        return testFlightSQLJDBCConnection(this.protocol, this.host, this.token, this.database, this.skipSSLValidation);
                     } else {
                         return executeQueryHTTP(this.protocol, this.host, this.token, this.database, "SHOW MEASUREMENTS", this.skipSSLValidation);
                     }
@@ -1032,8 +1031,8 @@ public class InfluxDBJavaFXIDE extends Application {
                 });
                 
                 // Execute query using selected API type
-                if ("InfluxDB 3 Java API".equals(apiType)) {
-                    return executeQueryInfluxDB3(protocol, host, token, database, query, skipSSLValidation);
+                if ("Flight SQL".equals(apiType) || "InfluxDB 3 Java API".equals(apiType)) {
+                    return executeQueryFlightSQLJDBC(protocol, host, token, database, query, skipSSLValidation);
                 } else {
                     return executeQueryHTTP(protocol, host, token, database, query, skipSSLValidation);
                 }
@@ -1237,42 +1236,56 @@ public class InfluxDBJavaFXIDE extends Application {
     }
     
     /**
-     * Executes an InfluxDB query using InfluxDB 3 Java API
-     * Uses Flight SQL for better performance and more features
+     * Executes an InfluxDB query using Flight SQL JDBC driver
+     * Uses Apache Arrow Flight for high-performance data transfer
      * Automatically translates InfluxDB 1.x syntax to modern SQL syntax
      * Returns the JSON response as a string
      */
-    private String executeQueryInfluxDB3(String protocol, String host, String token, String database, String query, boolean skipSSLValidation) throws Exception {
+    private String executeQueryFlightSQLJDBC(String protocol, String host, String token, String database, String query, boolean skipSSLValidation) throws Exception {
         try {
-            // Construct the connection URL
-            String url = protocol + "://" + host;
-            System.out.println("InfluxDB 3 API: Connecting to " + url);
+            // Construct the JDBC connection URL
+            String jdbcUrl = "jdbc:arrow-flight://" + host + "?database=" + database;
+            System.out.println("Flight SQL JDBC: Connecting to " + jdbcUrl);
             
-            // Translate InfluxDB 1.x syntax to modern SQL syntax for InfluxDB 3 API
+            // Translate InfluxDB 1.x syntax to modern SQL syntax for Flight SQL
             String translatedQuery = translateQueryForInfluxDB3(query);
-            System.out.println("InfluxDB 3 API: Original query: " + query);
-            System.out.println("InfluxDB 3 API: Translated query: " + translatedQuery);
+            System.out.println("Flight SQL JDBC: Original query: " + query);
+            System.out.println("Flight SQL JDBC: Translated query: " + translatedQuery);
             
-            // Create InfluxDB 3 client
-            try (com.influxdb.v3.client.InfluxDBClient client = com.influxdb.v3.client.InfluxDBClient.getInstance(url, token.toCharArray(), database)) {
-                System.out.println("InfluxDB 3 API: Executing translated query: " + translatedQuery);
+            // Use Flight SQL JDBC driver
+            try (java.sql.Connection connection = java.sql.DriverManager.getConnection(jdbcUrl, "token", token)) {
+                System.out.println("Flight SQL JDBC: Executing translated query: " + translatedQuery);
                 
-                // Execute query using Flight SQL
-                try (Stream<Object[]> stream = client.query(translatedQuery)) {
-                    // Convert results to JSON format for consistency with REST API
-                    List<Object[]> results = stream.toList();
+                // Execute query using JDBC
+                try (java.sql.Statement stmt = connection.createStatement();
+                     java.sql.ResultSet rs = stmt.executeQuery(translatedQuery)) {
+                    
+                    // Get metadata for column information
+                    java.sql.ResultSetMetaData metaData = rs.getMetaData();
+                    int columnCount = metaData.getColumnCount();
+                    
+                    // Extract column names
+                    List<String> columns = new ArrayList<>();
+                    for (int i = 1; i <= columnCount; i++) {
+                        String columnName = metaData.getColumnName(i);
+                        if (columnName == null || columnName.isEmpty()) {
+                            columnName = "column_" + i;
+                        }
+                        columns.add(columnName);
+                    }
+                    
+                    // Collect results
+                    List<Object[]> results = new ArrayList<>();
+                    while (rs.next()) {
+                        Object[] row = new Object[columnCount];
+                        for (int i = 1; i <= columnCount; i++) {
+                            row[i-1] = rs.getObject(i);
+                        }
+                        results.add(row);
+                    }
                     
                     if (results.isEmpty()) {
                         return "{\"results\":[{\"statement_id\":0,\"series\":[]}]}";
-                    }
-                    
-                    // Get column names from first row (assuming all rows have same structure)
-                    Object[] firstRow = results.get(0);
-                    List<String> columns = new ArrayList<>();
-                    
-                    // For now, use generic column names since InfluxDB 3 doesn't provide them directly
-                    for (int i = 0; i < firstRow.length; i++) {
-                        columns.add("column_" + i);
                     }
                     
                     // Build JSON response in InfluxDB v1 format for compatibility
@@ -1306,12 +1319,12 @@ public class InfluxDBJavaFXIDE extends Application {
                     jsonResponse.append("]}]}]}");
                     
                     String result = jsonResponse.toString();
-                    System.out.println("InfluxDB 3 API: Query successful, returned " + results.size() + " rows");
+                    System.out.println("Flight SQL JDBC: Query successful, returned " + results.size() + " rows");
                     return result;
                 }
             }
         } catch (Exception e) {
-            System.err.println("InfluxDB 3 API query failed: " + e.getMessage());
+            System.err.println("Flight SQL JDBC query failed: " + e.getMessage());
             e.printStackTrace();
             throw e;
         }
@@ -2309,7 +2322,7 @@ public class InfluxDBJavaFXIDE extends Application {
         props.setProperty("database", "");
         props.setProperty("skipSSLValidation", "false");
         props.setProperty("queryTimeout", "2 minutes");
-        props.setProperty("apiType", "InfluxDB 3 Java API");
+        props.setProperty("apiType", "Flight SQL");
         
         try {
             // Check if settings file exists in user home directory
@@ -2353,40 +2366,46 @@ public class InfluxDBJavaFXIDE extends Application {
     }
     
     /**
-     * Tests InfluxDB 3 Java API connection
-     * Creates a client and runs a simple test query
+     * Tests Flight SQL JDBC connection
+     * Creates a JDBC connection and runs a simple test query
      */
-    private String testInfluxDB3Connection(String protocol, String host, String token, String database, boolean skipSSLValidation) {
+    private String testFlightSQLJDBCConnection(String protocol, String host, String token, String database, boolean skipSSLValidation) {
         try {
             // Check if required JVM arguments are present for Apache Arrow
             if (!checkApacheArrowJVMArgs()) {
-                return "Error: InfluxDB 3 Java API requires JVM arguments: --add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED. Please restart the application with these arguments.";
+                return "Error: Flight SQL JDBC requires JVM arguments: --add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED. Please restart the application with these arguments.";
             }
             
-            // Construct the connection URL
-            String url = protocol + "://" + host;
-            System.out.println("Testing InfluxDB 3 connection to: " + url);
+            // Construct the JDBC connection URL
+            String jdbcUrl = "jdbc:arrow-flight://" + host + "?database=" + database;
+            System.out.println("Testing Flight SQL JDBC connection to: " + jdbcUrl);
             
-            // Create InfluxDB 3 client
-            try (com.influxdb.v3.client.InfluxDBClient client = com.influxdb.v3.client.InfluxDBClient.getInstance(url, token.toCharArray(), database)) {
-                // Test with a simple query - use SHOW TABLES for InfluxDB 3 API
+            // Test JDBC connection
+            try (java.sql.Connection connection = java.sql.DriverManager.getConnection(jdbcUrl, "token", token)) {
+                // Test with a simple query - use SHOW TABLES for Flight SQL
                 String testQuery = "SHOW TABLES";
                 System.out.println("Testing query: " + testQuery);
                 
-                try (Stream<Object[]> stream = client.query(testQuery)) {
-                    // Convert stream to list to check if it works
-                    List<Object[]> results = stream.toList();
-                    System.out.println("InfluxDB 3 test successful, got " + results.size() + " results");
-                    return "Success: InfluxDB 3 connection established with " + results.size() + " tables";
+                try (java.sql.Statement stmt = connection.createStatement();
+                     java.sql.ResultSet rs = stmt.executeQuery(testQuery)) {
+                    
+                    // Count results to verify connection works
+                    int resultCount = 0;
+                    while (rs.next()) {
+                        resultCount++;
+                    }
+                    
+                    System.out.println("Flight SQL JDBC test successful, got " + resultCount + " results");
+                    return "Success: Flight SQL JDBC connection established with " + resultCount + " tables";
                 }
             }
         } catch (Exception e) {
-            System.err.println("InfluxDB 3 connection test failed: " + e.getMessage());
+            System.err.println("Flight SQL JDBC connection test failed: " + e.getMessage());
             e.printStackTrace();
             
             // Check if it's a JVM argument issue
             if (e.getMessage().contains("Failed to initialize MemoryUtil") || e.getMessage().contains("Unable to make field")) {
-                return "Error: InfluxDB 3 Java API requires JVM arguments: --add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED. Please restart the application with these arguments.";
+                return "Error: Flight SQL JDBC requires JVM arguments: --add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED. Please restart the application with these arguments.";
             }
             
             return "Error: " + e.getMessage();
@@ -2409,7 +2428,7 @@ public class InfluxDBJavaFXIDE extends Application {
     }
     
     /**
-     * Translates InfluxDB 1.x syntax to modern SQL syntax for InfluxDB 3 API
+     * Translates InfluxDB 1.x syntax to modern SQL syntax for Flight SQL
      * Converts legacy commands to their modern equivalents
      */
     private String translateQueryForInfluxDB3(String query) {
@@ -2422,13 +2441,13 @@ public class InfluxDBJavaFXIDE extends Application {
         
         // Translate SHOW MEASUREMENTS to SHOW TABLES
         if (upperQuery.startsWith("SHOW MEASUREMENTS")) {
-            System.out.println("Translating SHOW MEASUREMENTS to SHOW TABLES for InfluxDB 3 API");
+            System.out.println("Translating SHOW MEASUREMENTS to SHOW TABLES for Flight SQL");
             return "SHOW TABLES";
         }
         
         // Translate SHOW DATABASES to SHOW SCHEMAS (if supported)
         if (upperQuery.startsWith("SHOW DATABASES")) {
-            System.out.println("Translating SHOW DATABASES to SHOW SCHEMAS for InfluxDB 3 API");
+            System.out.println("Translating SHOW DATABASES to SHOW SCHEMAS for Flight SQL");
             return "SHOW SCHEMAS";
         }
         

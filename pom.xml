@@ -44,6 +44,13 @@
             <artifactId>json</artifactId>
             <version>20231013</version>
         </dependency>
+        
+        <!-- Flight SQL JDBC Driver -->
+        <dependency>
+            <groupId>org.apache.arrow</groupId>
+            <artifactId>flight-sql-jdbc-driver</artifactId>
+            <version>18.3.0</version>
+        </dependency>
     </dependencies>
 
     <build>
