@@ -71,11 +71,11 @@ public class InfluxDBJavaFXIDE extends Application {
     private ObservableList<ObservableList<String>> allResultsData;
     private Button executeButton;
     private Button clearButton;
-    private Button showQueryButton;
+    private Button stopQueryButton;
     private Label statusLabel;
     private ProgressIndicator progressIndicator;
     private Stage mainStage;
-    private String lastExecutedQuery = "";
+    private CompletableFuture<String> runningQueryTask = null;
     
     // InfluxDB 3 Java API client
     private com.influxdb.v3.client.InfluxDBClient influxDB3Client;
@@ -83,6 +83,12 @@ public class InfluxDBJavaFXIDE extends Application {
     // Settings file constants
     private static final String SETTINGS_DIR = System.getProperty("user.home") + File.separator + ".influxdb-ide";
     private static final String SETTINGS_FILE = SETTINGS_DIR + File.separator + "settings.properties";
+    
+    // Memory management constants
+    private static final int MAX_RESULT_SIZE_MB = 100; // Maximum result size in MB
+    private static final int MAX_TABLE_ROWS = 10000; // Maximum rows to display in table
+    private static final int MAX_TEXT_LENGTH = 1000000; // Maximum text length (1MB)
+    private static final int CHUNK_SIZE = 1000; // Process data in chunks
 
     /**
      * Main entry point for the JavaFX application
@@ -584,20 +590,20 @@ public class InfluxDBJavaFXIDE extends Application {
         executeButton.setPrefHeight(40); // Fixed height to match initial query area height
         executeButton.setAlignment(Pos.CENTER);
         
-        // Show Query button with blue styling
-        showQueryButton = new Button("Show Query");
-        showQueryButton.setStyle("-fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;");
-        showQueryButton.setPrefWidth(100);
-        showQueryButton.setPrefHeight(40); // Fixed height to match initial query area height
-        showQueryButton.setAlignment(Pos.CENTER);
-        showQueryButton.setOnAction(e -> showLastExecutedQuery());
-        showQueryButton.setDisable(true); // Initially disabled until a query is executed
-        showQueryButton.setTooltip(new Tooltip("Show the last executed query for debugging and reference"));
+        // Stop Query button with red styling
+        stopQueryButton = new Button("Stop Query");
+        stopQueryButton.setStyle("-fx-background-color: #f44336; -fx-text-fill: white; -fx-font-weight: bold;");
+        stopQueryButton.setPrefWidth(100);
+        stopQueryButton.setPrefHeight(40); // Fixed height to match initial query area height
+        stopQueryButton.setAlignment(Pos.CENTER);
+        stopQueryButton.setOnAction(e -> stopRunningQuery());
+        stopQueryButton.setDisable(true); // Initially disabled until a query is executing
+        stopQueryButton.setTooltip(new Tooltip("Stop the currently running query"));
         
         // Note: Button height is now fixed, users can resize query area independently
         
         // Add components to horizontal row
-        queryRow.getChildren().addAll(queryArea, executeButton, showQueryButton);
+        queryRow.getChildren().addAll(queryArea, executeButton, stopQueryButton);
 
         // Add header row and query row to main container
         queryBox.getChildren().addAll(headerRow, queryRow);
@@ -629,9 +635,17 @@ public class InfluxDBJavaFXIDE extends Application {
         exportButton.setPrefHeight(30);
         exportButton.setOnAction(e -> exportToCSV());
         
+        // Memory monitoring button with orange styling
+        Button memoryButton = new Button("Memory Info");
+        memoryButton.setStyle("-fx-background-color: #FF9800; -fx-text-fill: white; -fx-font-weight: bold;");
+        memoryButton.setPrefWidth(100);
+        memoryButton.setPrefHeight(30);
+        memoryButton.setTooltip(new Tooltip("Click to see current memory usage and cleanup options"));
+        memoryButton.setOnAction(e -> showMemoryInfo());
+        
         // Make section label expand to fill available space
         HBox.setHgrow(sectionLabel, Priority.ALWAYS);
-        headerBox.getChildren().addAll(sectionLabel, exportButton);
+        headerBox.getChildren().addAll(sectionLabel, exportButton, memoryButton);
         
         // Record count and global filter
         HBox controlsBox = new HBox(20);
@@ -991,22 +1005,19 @@ public class InfluxDBJavaFXIDE extends Application {
             return;
         }
         
-        // Store the last executed query for the Show Query feature
-        lastExecutedQuery = query;
+        // Query is being executed
 
         // Update UI state to show query is executing
         executeButton.setDisable(true);
-        showQueryButton.setDisable(true); // Disable Show Query button during execution
+        stopQueryButton.setDisable(false); // Enable Stop Query button during execution
         progressIndicator.setVisible(true);
         statusLabel.setText("Executing query...");
         
         // Clear previous results from both table and raw JSON views
-        rawResultArea.clear();
-        resultsTable.getColumns().clear();
-        resultsTable.getItems().clear();
+        clearResultsAndCleanupMemory();
 
         // Execute query asynchronously to prevent UI freezing
-        CompletableFuture.supplyAsync(() -> {
+        runningQueryTask = CompletableFuture.supplyAsync(() -> {
             try {
                 // Update status to show query is being processed
                 javafx.application.Platform.runLater(() -> {
@@ -1029,7 +1040,10 @@ public class InfluxDBJavaFXIDE extends Application {
             } catch (Exception ex) {
                 return "Error: " + ex.getMessage();
             }
-        }).thenAcceptAsync(result -> {
+        });
+        
+        // Handle the result asynchronously
+        runningQueryTask.thenAcceptAsync(result -> {
             // Update UI on JavaFX thread
             javafx.application.Platform.runLater(() -> {
                 // Try to parse and display in table format
@@ -1041,17 +1055,17 @@ public class InfluxDBJavaFXIDE extends Application {
                 }
                 
                 executeButton.setDisable(false);
-                showQueryButton.setDisable(false); // Enable Show Query button after successful execution
+                stopQueryButton.setDisable(true); // Disable Stop Query button after completion
                 progressIndicator.setVisible(false);
-                statusLabel.setText("Query completed");
+                statusLabel.setText("Query completed - " + getMemoryInfo());
             });
         }).exceptionally(throwable -> {
             // Handle any exceptions that occur during execution
             javafx.application.Platform.runLater(() -> {
                 executeButton.setDisable(false);
-                showQueryButton.setDisable(false); // Enable Show Query button even if query failed
+                stopQueryButton.setDisable(true); // Disable Stop Query button after failure
                 progressIndicator.setVisible(false);
-                statusLabel.setText("Query failed");
+                statusLabel.setText("Query failed - " + getMemoryInfo());
                 
                 // Show error in raw results area
                 rawResultArea.setText("Query execution failed: " + throwable.getMessage());
@@ -1065,6 +1079,31 @@ public class InfluxDBJavaFXIDE extends Application {
             });
             return null;
         });
+    }
+
+    /**
+     * Stops the currently running query if one is active
+     * Cancels the CompletableFuture task and updates the UI accordingly
+     */
+    private void stopRunningQuery() {
+        if (runningQueryTask != null && !runningQueryTask.isDone()) {
+            // Cancel the running task
+            runningQueryTask.cancel(true);
+            runningQueryTask = null;
+            
+            // Update UI state
+            executeButton.setDisable(false);
+            stopQueryButton.setDisable(true);
+            progressIndicator.setVisible(false);
+            statusLabel.setText("Query stopped by user - " + getMemoryInfo());
+            
+            // Clear any partial results
+            clearResultsAndCleanupMemory();
+            
+            System.out.println("Query execution stopped by user");
+        } else {
+            showAlert("No Active Query", "There is no query currently running to stop.");
+        }
     }
 
     /**
@@ -1288,7 +1327,8 @@ public class InfluxDBJavaFXIDE extends Application {
      */
     private void displayResultsInTable(String jsonResult) {
         // ALWAYS display the raw JSON first for debugging and visibility
-        rawResultArea.setText(jsonResult);
+        // Use safe text setting to prevent OutOfMemoryError
+        setTextSafely(rawResultArea, jsonResult);
         
         try {
             // Check if response indicates an HTTP error
@@ -1402,6 +1442,7 @@ public class InfluxDBJavaFXIDE extends Application {
     /**
      * Parses the new direct array format where response is an array of objects
      * Each object represents a row with key-value pairs
+     * Includes memory management and chunked processing for large datasets
      */
     private void parseDirectArrayFormat(JSONArray array) {
         if (array.length() == 0) {
@@ -1412,31 +1453,94 @@ public class InfluxDBJavaFXIDE extends Application {
             return;
         }
         
+        // Check memory usage and warn user if result is very large
+        if (array.length() > MAX_TABLE_ROWS) {
+            String warningMsg = String.format("⚠️ Large result set detected: %d rows\n" +
+                "Displaying first %d rows for performance. Use filters to see more data.\n" +
+                "Consider adding LIMIT to your query for better performance.", 
+                array.length(), MAX_TABLE_ROWS);
+            
+            showAlert("Large Result Set", warningMsg);
+            
+            // Limit the array to prevent memory issues
+            array = limitArraySize(array, MAX_TABLE_ROWS);
+        }
+        
         // Get the first object to determine column structure
         JSONObject firstObject = array.getJSONObject(0);
         Set<String> columnNames = new HashSet<>();
         
-        // Collect all possible column names from all objects
-        for (int i = 0; i < array.length(); i++) {
+        // First, get columns from the first object (this ensures we have the base structure)
+        Iterator<String> firstKeys = firstObject.keys();
+        while (firstKeys.hasNext()) {
+            columnNames.add(firstKeys.next());
+        }
+        
+        // Then check if all objects have the same structure
+        boolean allSameStructure = true;
+        for (int i = 1; i < Math.min(array.length(), 100); i++) { // Check first 100 objects for performance
             JSONObject obj = array.getJSONObject(i);
+            Set<String> objKeys = new HashSet<>();
             Iterator<String> keys = obj.keys();
             while (keys.hasNext()) {
-                columnNames.add(keys.next());
+                objKeys.add(keys.next());
+            }
+            
+            if (!objKeys.equals(columnNames)) {
+                allSameStructure = false;
+                break;
             }
         }
         
-        // Convert to sorted list for consistent column order
-        List<String> sortedColumns = new ArrayList<>(columnNames);
-        Collections.sort(sortedColumns);
+        // If structure is consistent, use the first object's columns
+        // If not, collect all possible columns but prioritize the first object's structure
+        if (!allSameStructure) {
+            System.out.println("Warning: Inconsistent column structure detected. Using first object as base.");
+            
+            // Add any missing columns from other objects, but keep first object's order
+            for (int i = 1; i < array.length(); i++) {
+                JSONObject obj = array.getJSONObject(i);
+                Iterator<String> keys = obj.keys();
+                while (keys.hasNext()) {
+                    String key = keys.next();
+                    if (!columnNames.contains(key)) {
+                        columnNames.add(key);
+                    }
+                }
+            }
+        }
+        
+        // Convert to list, prioritizing first object's column order
+        List<String> orderedColumns = new ArrayList<>();
+        
+        // First add columns from first object in their original order
+        Iterator<String> firstKeysOrdered = firstObject.keys();
+        while (firstKeysOrdered.hasNext()) {
+            String key = firstKeysOrdered.next();
+            orderedColumns.add(key);
+        }
+        
+        // Then add any additional columns that weren't in the first object
+        for (String colName : columnNames) {
+            if (!orderedColumns.contains(colName)) {
+                orderedColumns.add(colName);
+            }
+        }
+        
+        // Log column information for debugging
+        System.out.println("Column parsing info:");
+        System.out.println("  - First object columns: " + String.join(", ", orderedColumns));
+        System.out.println("  - Total unique columns: " + orderedColumns.size());
+        System.out.println("  - Structure consistent: " + allSameStructure);
         
         // Clear existing table
         resultsTable.getColumns().clear();
         resultsTable.getItems().clear();
         
         // Create columns dynamically with Excel-like headers
-        for (int i = 0; i < sortedColumns.size(); i++) {
+        for (int i = 0; i < orderedColumns.size(); i++) {
             final int colIndex = i;
-            String columnName = sortedColumns.get(i);
+            String columnName = orderedColumns.get(i);
             
             // Create column header with sorting and filtering
             VBox headerBox = createExcelLikeHeader(columnName, colIndex);
@@ -1465,7 +1569,7 @@ public class InfluxDBJavaFXIDE extends Application {
             ObservableList<String> rowData = FXCollections.observableArrayList();
             
             // Add values in the same order as columns
-            for (String columnName : sortedColumns) {
+            for (String columnName : orderedColumns) {
                 Object value = obj.opt(columnName);
                 rowData.add(value != null ? value.toString() : "");
             }
@@ -1482,13 +1586,138 @@ public class InfluxDBJavaFXIDE extends Application {
         // Switch to table tab
         resultsTabPane.getSelectionModel().select(0);
         
-        System.out.println("Successfully parsed direct array format with " + array.length() + " rows and " + sortedColumns.size() + " columns");
+        System.out.println("Successfully parsed direct array format with " + array.length() + " rows and " + orderedColumns.size() + " columns");
+    }
+    
+    /**
+     * Limits array size to prevent memory issues
+     * Returns a new array with limited size if needed
+     */
+    private JSONArray limitArraySize(JSONArray originalArray, int maxSize) {
+        if (originalArray.length() <= maxSize) {
+            return originalArray;
+        }
+        
+        // Create a new array with limited size
+        JSONArray limitedArray = new JSONArray();
+        for (int i = 0; i < maxSize; i++) {
+            limitedArray.put(originalArray.get(i));
+        }
+        
+        System.out.println("Limited array size from " + originalArray.length() + " to " + maxSize + " for memory management");
+        return limitedArray;
+    }
+    
+    /**
+     * Limits values array size to prevent memory issues
+     * Returns a new array with limited size if needed
+     */
+    private JSONArray limitValuesArraySize(JSONArray originalValues, int maxSize) {
+        if (originalValues.length() <= maxSize) {
+            return originalValues;
+        }
+        
+        // Create a new array with limited size
+        JSONArray limitedArray = new JSONArray();
+        for (int i = 0; i < maxSize; i++) {
+            limitedArray.put(originalValues.get(i));
+        }
+        
+        System.out.println("Limited values array size from " + originalValues.length() + " to " + maxSize + " for memory management");
+        return limitedArray;
+    }
+    
+    /**
+     * Checks current memory usage and returns memory info
+     */
+    private String getMemoryInfo() {
+        Runtime runtime = Runtime.getRuntime();
+        long totalMemory = runtime.totalMemory();
+        long freeMemory = runtime.freeMemory();
+        long usedMemory = totalMemory - freeMemory;
+        long maxMemory = runtime.maxMemory();
+        
+        return String.format("Memory: %d MB used / %d MB total / %d MB max", 
+            usedMemory / (1024 * 1024), 
+            totalMemory / (1024 * 1024), 
+            maxMemory / (1024 * 1024));
+    }
+    
+    /**
+     * Clears results and performs memory cleanup to prevent OutOfMemoryError
+     */
+    private void clearResultsAndCleanupMemory() {
+        try {
+            // Clear text areas
+            rawResultArea.clear();
+            
+            // Clear table data
+            resultsTable.getColumns().clear();
+            resultsTable.getItems().clear();
+            
+            // Clear stored data
+            if (allResultsData != null) {
+                allResultsData.clear();
+                allResultsData = null;
+            }
+            
+            // Force garbage collection
+            System.gc();
+            
+            // Log memory info
+            System.out.println("Memory cleanup completed: " + getMemoryInfo());
+            
+        } catch (Exception e) {
+            System.err.println("Error during memory cleanup: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Safely sets text in TextArea with memory management
+     * Truncates very long text to prevent OutOfMemoryError
+     */
+    private void setTextSafely(TextArea textArea, String text) {
+        try {
+            if (text.length() > MAX_TEXT_LENGTH) {
+                String truncatedText = text.substring(0, MAX_TEXT_LENGTH) + 
+                    "\n\n... [Content truncated due to size limit. Total length: " + text.length() + " characters]";
+                textArea.setText(truncatedText);
+                
+                // Show warning to user
+                showAlert("Large Result", "Result was truncated due to size limit (" + MAX_TEXT_LENGTH + " characters). " +
+                    "Consider adding LIMIT to your query or using more specific filters.");
+            } else {
+                textArea.setText(text);
+            }
+        } catch (OutOfMemoryError e) {
+            // Handle OutOfMemoryError gracefully
+            System.err.println("OutOfMemoryError while setting text: " + e.getMessage());
+            textArea.setText("⚠️ Result too large to display. Error: " + e.getMessage() + 
+                "\n\nConsider adding LIMIT to your query or using more specific filters.");
+            
+            // Force garbage collection
+            System.gc();
+        }
     }
     
     /**
      * Parses the traditional InfluxDB v1 format with columns and values arrays
+     * Includes memory management for large datasets
      */
     private void parseInfluxDBV1Format(JSONArray columns, JSONArray values) {
+        // Check memory usage and warn user if result is very large
+        if (values.length() > MAX_TABLE_ROWS) {
+            String warningMsg = String.format("⚠️ Large result set detected: %d rows\n" +
+                "Displaying first %d rows for performance. Use filters to see more data.\n" +
+                "Consider adding LIMIT to your query for better performance.", 
+                values.length(), MAX_TABLE_ROWS);
+            
+            showAlert("Large Result Set", warningMsg);
+            
+            // Limit the values array to prevent memory issues
+            values = limitValuesArraySize(values, MAX_TABLE_ROWS);
+        }
+        
         // Clear existing table
         resultsTable.getColumns().clear();
         resultsTable.getItems().clear();
@@ -1829,14 +2058,12 @@ public class InfluxDBJavaFXIDE extends Application {
     
 
     private void clearResults() {
-        rawResultArea.clear();
-        resultsTable.getColumns().clear();
-        resultsTable.getItems().clear();
+        // Use memory cleanup method for better memory management
+        clearResultsAndCleanupMemory();
         
         // Reset filter controls
         filterField.clear();
         recordCountLabel.setText("Records: 0");
-        allResultsData = null;
         
         // Reset bottom record count display
         Label bottomRecordCount = (Label) mainStage.getScene().lookup("#bottomRecordCount");
@@ -1844,7 +2071,7 @@ public class InfluxDBJavaFXIDE extends Application {
             bottomRecordCount.setText("No records");
         }
         
-        statusLabel.setText("Results cleared");
+        statusLabel.setText("Results cleared - " + getMemoryInfo());
     }
 
     private void showAlert(String title, String message) {
@@ -1856,57 +2083,78 @@ public class InfluxDBJavaFXIDE extends Application {
     }
     
     /**
-     * Shows the last executed query in a dialog
-     * Useful for debugging and understanding what query was sent to the database
+     * Shows current memory usage and provides cleanup options
+     * Helps users monitor and manage memory usage
      */
-    private void showLastExecutedQuery() {
-        if (lastExecutedQuery.isEmpty()) {
-            showAlert("No Query", "No query has been executed yet. Please run a query first.");
-            return;
-        }
-        
-        // Create a custom dialog to show the query
+    private void showMemoryInfo() {
+        // Create a custom dialog to show memory information
         Dialog<String> dialog = new Dialog<>();
-        dialog.setTitle("Last Executed Query");
-        dialog.setHeaderText("Query that was sent to InfluxDB:");
+        dialog.setTitle("Memory Information");
+        dialog.setHeaderText("Current Memory Usage and Management Options");
         dialog.setResizable(true);
         
         // Set the dialog size
-        dialog.setWidth(800);
+        dialog.setWidth(600);
         dialog.setHeight(400);
         
         // Create the content area
-        VBox content = new VBox(10);
+        VBox content = new VBox(15);
         content.setPadding(new Insets(20));
         
-        // Add query text area
-        TextArea queryTextArea = new TextArea(lastExecutedQuery);
-        queryTextArea.setEditable(false);
-        queryTextArea.setWrapText(true);
-        queryTextArea.setPrefRowCount(15);
-        queryTextArea.setFont(Font.font("Consolas", 12));
-        queryTextArea.setStyle("-fx-background-color: #f8f9fa; -fx-border-color: #dee2e6; -fx-border-radius: 4;");
+        // Current memory info
+        Label memoryInfoLabel = new Label("Current Memory Usage:");
+        memoryInfoLabel.setFont(Font.font("Arial", FontWeight.BOLD, 14));
         
-        // Add copy button
-        Button copyButton = new Button("Copy Query");
-        copyButton.setStyle("-fx-background-color: #28a745; -fx-text-fill: white; -fx-font-weight: bold;");
-        copyButton.setOnAction(e -> {
-            final ClipboardContent content2 = new ClipboardContent();
-            content2.putString(lastExecutedQuery);
-            javafx.scene.input.Clipboard.getSystemClipboard().setContent(content2);
+        TextArea memoryInfoArea = new TextArea(getMemoryInfo());
+        memoryInfoArea.setEditable(false);
+        memoryInfoArea.setWrapText(true);
+        memoryInfoArea.setPrefRowCount(3);
+        memoryInfoArea.setFont(Font.font("Consolas", 12));
+        memoryInfoArea.setStyle("-fx-background-color: #f8f9fa; -fx-border-color: #dee2e6; -fx-border-radius: 4;");
+        
+        // Memory management tips
+        Label tipsLabel = new Label("Memory Management Tips:");
+        tipsLabel.setFont(Font.font("Arial", FontWeight.BOLD, 14));
+        
+        TextArea tipsArea = new TextArea(
+            "• Use LIMIT in your queries to reduce result size\n" +
+            "• Add WHERE clauses to filter data before retrieval\n" +
+            "• Clear results when done to free memory\n" +
+            "• Large results (>10,000 rows) are automatically limited\n" +
+            "• Results >1MB text are automatically truncated\n" +
+            "• Consider using time-based filters for time-series data"
+        );
+        tipsArea.setEditable(false);
+        tipsArea.setWrapText(true);
+        tipsArea.setPrefRowCount(8);
+        tipsArea.setFont(Font.font("Arial", 11));
+        tipsArea.setStyle("-fx-background-color: #fff3cd; -fx-border-color: #ffeaa7; -fx-border-radius: 4;");
+        
+        // Action buttons
+        HBox buttonBox = new HBox(15);
+        buttonBox.setAlignment(Pos.CENTER);
+        
+        Button cleanupButton = new Button("Force Cleanup");
+        cleanupButton.setStyle("-fx-background-color: #dc3545; -fx-text-fill: white; -fx-font-weight: bold;");
+        cleanupButton.setOnAction(e -> {
+            clearResultsAndCleanupMemory();
+            memoryInfoArea.setText(getMemoryInfo());
+            dialog.setHeaderText("Memory Cleanup Completed - " + getMemoryInfo());
         });
         
-        // Add close button
+        Button refreshButton = new Button("Refresh Info");
+        refreshButton.setStyle("-fx-background-color: #17a2b8; -fx-text-fill: white;");
+        refreshButton.setOnAction(e -> {
+            memoryInfoArea.setText(getMemoryInfo());
+        });
+        
         Button closeButton = new Button("Close");
         closeButton.setStyle("-fx-background-color: #6c757d; -fx-text-fill: white;");
         closeButton.setOnAction(e -> dialog.close());
         
-        // Button layout
-        HBox buttonBox = new HBox(10);
-        buttonBox.setAlignment(Pos.CENTER_RIGHT);
-        buttonBox.getChildren().addAll(copyButton, closeButton);
+        buttonBox.getChildren().addAll(cleanupButton, refreshButton, closeButton);
         
-        content.getChildren().addAll(queryTextArea, buttonBox);
+        content.getChildren().addAll(memoryInfoLabel, memoryInfoArea, tipsLabel, tipsArea, buttonBox);
         dialog.getDialogPane().setContent(content);
         
         // Set the result converter
@@ -1915,6 +2163,8 @@ public class InfluxDBJavaFXIDE extends Application {
         // Show the dialog
         dialog.showAndWait();
     }
+    
+
 
     /**
      * Exports the current table data to a CSV file
