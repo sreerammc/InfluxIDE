@@ -217,7 +217,7 @@ public class InfluxDBJavaFXIDE extends Application {
         apiTypeCombo.getItems().addAll("REST API", "InfluxDB 3 Java API");
         apiTypeCombo.setValue(savedSettings.getProperty("apiType", "REST API"));
         apiTypeCombo.setPrefWidth(200);
-        apiTypeCombo.setTooltip(new Tooltip("REST API: Traditional HTTP queries, InfluxDB 3 API: Better performance with Flight SQL"));
+        apiTypeCombo.setTooltip(new Tooltip("REST API: Traditional HTTP queries with SHOW MEASUREMENTS, InfluxDB 3 API: Better performance with Flight SQL and SHOW TABLES"));
         apiTypeBox.getChildren().addAll(apiTypeLabel, apiTypeCombo);
 
         // Timeout configuration
@@ -2014,27 +2014,53 @@ public class InfluxDBJavaFXIDE extends Application {
      */
     private String testInfluxDB3Connection(String protocol, String host, String token, String database, boolean skipSSLValidation) {
         try {
+            // Check if required JVM arguments are present for Apache Arrow
+            if (!checkApacheArrowJVMArgs()) {
+                return "Error: InfluxDB 3 Java API requires JVM arguments: --add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED. Please restart the application with these arguments.";
+            }
+            
             // Construct the connection URL
             String url = protocol + "://" + host;
             System.out.println("Testing InfluxDB 3 connection to: " + url);
             
             // Create InfluxDB 3 client
             try (com.influxdb.v3.client.InfluxDBClient client = com.influxdb.v3.client.InfluxDBClient.getInstance(url, token.toCharArray(), database)) {
-                // Test with a simple query
-                String testQuery = "SHOW MEASUREMENTS";
+                // Test with a simple query - use SHOW TABLES for InfluxDB 3 API
+                String testQuery = "SHOW TABLES";
                 System.out.println("Testing query: " + testQuery);
                 
                 try (Stream<Object[]> stream = client.query(testQuery)) {
                     // Convert stream to list to check if it works
                     List<Object[]> results = stream.toList();
                     System.out.println("InfluxDB 3 test successful, got " + results.size() + " results");
-                    return "Success: InfluxDB 3 connection established with " + results.size() + " measurements";
+                    return "Success: InfluxDB 3 connection established with " + results.size() + " tables";
                 }
             }
         } catch (Exception e) {
             System.err.println("InfluxDB 3 connection test failed: " + e.getMessage());
             e.printStackTrace();
+            
+            // Check if it's a JVM argument issue
+            if (e.getMessage().contains("Failed to initialize MemoryUtil") || e.getMessage().contains("Unable to make field")) {
+                return "Error: InfluxDB 3 Java API requires JVM arguments: --add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED --add-opens=java.base/java.nio=ALL-UNNAMED. Please restart the application with these arguments.";
+            }
+            
             return "Error: " + e.getMessage();
+        }
+    }
+    
+    /**
+     * Checks if the required JVM arguments for Apache Arrow are present
+     * This helps provide better error messages to users
+     */
+    private boolean checkApacheArrowJVMArgs() {
+        try {
+            // Try to access the restricted field that Apache Arrow needs
+            java.lang.reflect.Field field = java.nio.Buffer.class.getDeclaredField("address");
+            field.setAccessible(true);
+            return true;
+        } catch (Exception e) {
+            return false;
         }
     }
 

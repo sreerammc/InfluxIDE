@@ -46,7 +46,7 @@ exit /b 1
 echo Starting InfluxDB IDE with JavaFX...
 echo.
 
-java --module-path "%modulePath%" --add-modules javafx.controls,javafx.fxml,javafx.graphics --add-opens javafx.graphics/javafx.scene=ALL-UNNAMED -cp "influx-simple-1.0.0.jar" com.influxdata.demo.InfluxDBJavaFXIDE
+java --module-path "%modulePath%" --add-modules javafx.controls,javafx.fxml,javafx.graphics --add-opens javafx.graphics/javafx.scene=ALL-UNNAMED --add-opens java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED --add-opens java.base/java.nio=ALL-UNNAMED -cp "influx-simple-1.0.0.jar" com.influxdata.demo.InfluxDBJavaFXIDE
 
 if %errorlevel% equ 0 (
     echo.

@@ -73,6 +73,8 @@
                                     <mainClass>com.influxdata.demo.InfluxDBJavaFXIDE</mainClass>
                                     <manifestEntries>
                                         <Add-Opens>javafx.graphics/javafx.scene=ALL-UNNAMED</Add-Opens>
+                                        <Add-Opens>java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED</Add-Opens>
+                                        <Add-Opens>java.base/java.nio=ALL-UNNAMED</Add-Opens>
                                     </manifestEntries>
                                 </transformer>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
@@ -142,6 +144,8 @@
                     <options>
                         <option>--add-opens</option>
                         <option>javafx.graphics/javafx.scene=ALL-UNNAMED</option>
+                        <option>--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED</option>
+                        <option>--add-opens=java.base/java.nio=ALL-UNNAMED</option>
                     </options>
                 </configuration>
             </plugin>
