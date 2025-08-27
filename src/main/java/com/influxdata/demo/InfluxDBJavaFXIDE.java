@@ -1173,6 +1173,7 @@ public class InfluxDBJavaFXIDE extends Application {
     /**
      * Executes an InfluxDB query using InfluxDB 3 Java API
      * Uses Flight SQL for better performance and more features
+     * Automatically translates InfluxDB 1.x syntax to modern SQL syntax
      * Returns the JSON response as a string
      */
     private String executeQueryInfluxDB3(String protocol, String host, String token, String database, String query, boolean skipSSLValidation) throws Exception {
@@ -1181,12 +1182,17 @@ public class InfluxDBJavaFXIDE extends Application {
             String url = protocol + "://" + host;
             System.out.println("InfluxDB 3 API: Connecting to " + url);
             
+            // Translate InfluxDB 1.x syntax to modern SQL syntax for InfluxDB 3 API
+            String translatedQuery = translateQueryForInfluxDB3(query);
+            System.out.println("InfluxDB 3 API: Original query: " + query);
+            System.out.println("InfluxDB 3 API: Translated query: " + translatedQuery);
+            
             // Create InfluxDB 3 client
             try (com.influxdb.v3.client.InfluxDBClient client = com.influxdb.v3.client.InfluxDBClient.getInstance(url, token.toCharArray(), database)) {
-                System.out.println("InfluxDB 3 API: Executing query: " + query);
+                System.out.println("InfluxDB 3 API: Executing translated query: " + translatedQuery);
                 
                 // Execute query using Flight SQL
-                try (Stream<Object[]> stream = client.query(query)) {
+                try (Stream<Object[]> stream = client.query(translatedQuery)) {
                     // Convert results to JSON format for consistency with REST API
                     List<Object[]> results = stream.toList();
                     
@@ -2062,6 +2068,34 @@ public class InfluxDBJavaFXIDE extends Application {
         } catch (Exception e) {
             return false;
         }
+    }
+    
+    /**
+     * Translates InfluxDB 1.x syntax to modern SQL syntax for InfluxDB 3 API
+     * Converts legacy commands to their modern equivalents
+     */
+    private String translateQueryForInfluxDB3(String query) {
+        if (query == null || query.trim().isEmpty()) {
+            return query;
+        }
+        
+        String trimmedQuery = query.trim();
+        String upperQuery = trimmedQuery.toUpperCase();
+        
+        // Translate SHOW MEASUREMENTS to SHOW TABLES
+        if (upperQuery.startsWith("SHOW MEASUREMENTS")) {
+            System.out.println("Translating SHOW MEASUREMENTS to SHOW TABLES for InfluxDB 3 API");
+            return "SHOW TABLES";
+        }
+        
+        // Translate SHOW DATABASES to SHOW SCHEMAS (if supported)
+        if (upperQuery.startsWith("SHOW DATABASES")) {
+            System.out.println("Translating SHOW DATABASES to SHOW SCHEMAS for InfluxDB 3 API");
+            return "SHOW SCHEMAS";
+        }
+        
+        // For other queries, return as-is (they should work with modern SQL syntax)
+        return trimmedQuery;
     }
 
     public static void main(String[] args) {
