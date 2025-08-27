@@ -56,7 +56,7 @@ public class InfluxDBJavaFXIDE extends Application {
 
     private String protocol = "http"; // Default to HTTP
     private boolean skipSSLValidation = false; // Default to strict SSL
-    private String apiType = "rest"; // Default to REST API
+    private String apiType = "InfluxDB 3 Java API"; // Default to InfluxDB 3 Java API for better performance
     private String host;
     private String database;
     private String token;
@@ -214,10 +214,10 @@ public class InfluxDBJavaFXIDE extends Application {
         Label apiTypeLabel = new Label("API Type:");
         apiTypeLabel.setMinWidth(100);
         ComboBox<String> apiTypeCombo = new ComboBox<>();
-        apiTypeCombo.getItems().addAll("REST API", "InfluxDB 3 Java API");
-        apiTypeCombo.setValue(savedSettings.getProperty("apiType", "REST API"));
+        apiTypeCombo.getItems().addAll("InfluxDB 3 Java API", "REST API");
+        apiTypeCombo.setValue(savedSettings.getProperty("apiType", "InfluxDB 3 Java API"));
         apiTypeCombo.setPrefWidth(200);
-        apiTypeCombo.setTooltip(new Tooltip("REST API: Traditional HTTP queries with SHOW MEASUREMENTS, InfluxDB 3 API: Better performance with Flight SQL and SHOW TABLES"));
+        apiTypeCombo.setTooltip(new Tooltip("InfluxDB 3 Java API: Better performance with Flight SQL and SHOW TABLES (Default), REST API: Traditional HTTP queries with SHOW MEASUREMENTS"));
         apiTypeBox.getChildren().addAll(apiTypeLabel, apiTypeCombo);
 
         // Timeout configuration
@@ -884,27 +884,33 @@ public class InfluxDBJavaFXIDE extends Application {
 
     /**
      * Sets up drag and drop functionality between results table and query area
-     * Allows users to drag table names from results into query text for convenience
+     * Allows users to drag individual cell values from results into query text for convenience
      */
     private void setupDragAndDrop() {
         // Enable drag detection on the results table
         resultsTable.setOnDragDetected(event -> {
-            // Get the currently selected row from the table
+            // Get the currently selected row and column from the table
             ObservableList<String> selectedRow = resultsTable.getSelectionModel().getSelectedItem();
-            if (selectedRow != null && !selectedRow.isEmpty()) {
-                // Extract the first column value (usually table/measurement name) for dragging
-                String dragContent = selectedRow.get(0);
-                
-                // Create clipboard content with the dragged text
-                ClipboardContent content = new ClipboardContent();
-                content.putString(dragContent);
-                
-                // Start drag and drop operation with COPY transfer mode
-                Dragboard db = resultsTable.startDragAndDrop(TransferMode.COPY);
-                db.setContent(content);
-                
-                // Consume the event to prevent further processing
-                event.consume();
+            TableColumn<ObservableList<String>, ?> selectedColumn = resultsTable.getSelectionModel().getSelectedCells().get(0).getTableColumn();
+            
+            if (selectedRow != null && !selectedRow.isEmpty() && selectedColumn != null) {
+                // Find the column index for the selected column
+                int columnIndex = resultsTable.getColumns().indexOf(selectedColumn);
+                if (columnIndex >= 0 && columnIndex < selectedRow.size()) {
+                    // Extract the specific cell value that was clicked/dragged
+                    String dragContent = selectedRow.get(columnIndex);
+                    
+                    // Create clipboard content with the dragged text
+                    ClipboardContent content = new ClipboardContent();
+                    content.putString(dragContent);
+                    
+                    // Start drag and drop operation with COPY transfer mode
+                    Dragboard db = resultsTable.startDragAndDrop(TransferMode.COPY);
+                    db.setContent(content);
+                    
+                    // Consume the event to prevent further processing
+                    event.consume();
+                }
             }
         });
         
@@ -954,6 +960,9 @@ public class InfluxDBJavaFXIDE extends Application {
         queryArea.setOnDragExited(event -> {
             queryArea.setStyle("-fx-border-color: #cccccc; -fx-border-width: 1; -fx-border-radius: 5; -fx-background-radius: 5;");
         });
+        
+        // Add tooltip to results table to inform users about drag functionality
+        resultsTable.setTooltip(new Tooltip("💡 Tip: Click and drag any cell value to copy it to the query area"));
     }
 
     /**
@@ -1971,7 +1980,7 @@ public class InfluxDBJavaFXIDE extends Application {
         props.setProperty("database", "");
         props.setProperty("skipSSLValidation", "false");
         props.setProperty("queryTimeout", "2 minutes");
-        props.setProperty("apiType", "REST API");
+        props.setProperty("apiType", "InfluxDB 3 Java API");
         
         try {
             // Check if settings file exists in user home directory
