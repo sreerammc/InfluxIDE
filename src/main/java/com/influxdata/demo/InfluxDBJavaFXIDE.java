@@ -1248,122 +1248,119 @@ public class InfluxDBJavaFXIDE extends Application {
      * Returns the JSON response as a string
      */
     private String executeQueryFlightSQLJDBC(String protocol, String host, String token, String database, String query, boolean skipSSLValidation) throws Exception {
-        try {
-            // Try multiple Flight SQL endpoints - Flight SQL typically uses different paths than REST API
-            String[] flightEndpoints = {
-                // Standard Flight SQL endpoint
-                host + "/flight",
-                // Alternative Flight SQL endpoint
-                host + "/arrow-flight",
-                // Direct host connection (for dedicated Flight SQL servers)
-                host
-            };
-            
-            Exception lastError = null;
-            
-            for (String endpoint : flightEndpoints) {
-                try {
-                    // Construct the JDBC connection URL
-                    String jdbcUrl;
-                    if ("https".equalsIgnoreCase(protocol)) {
-                        // For HTTPS, use port 443 (default) or extract from host if specified
-                        if (endpoint.contains(":")) {
-                            jdbcUrl = "jdbc:arrow-flight://" + endpoint + "?database=" + database + "&useEncryption=true";
-                        } else {
-                            jdbcUrl = "jdbc:arrow-flight://" + endpoint + ":443?database=" + database + "&useEncryption=true";
-                        }
+        // Try multiple Flight SQL endpoints - Flight SQL typically uses different paths than REST API
+        String[] flightEndpoints = {
+            // Standard Flight SQL endpoint
+            host + "/flight",
+            // Alternative Flight SQL endpoint
+            host + "/arrow-flight",
+            // Direct host connection (for dedicated Flight SQL servers)
+            host
+        };
+        
+        Exception lastError = null;
+        
+        for (String endpoint : flightEndpoints) {
+            try {
+                // Construct the JDBC connection URL
+                String jdbcUrl;
+                if ("https".equalsIgnoreCase(protocol)) {
+                    // For HTTPS, use port 443 (default) or extract from host if specified
+                    if (endpoint.contains(":")) {
+                        jdbcUrl = "jdbc:arrow-flight://" + endpoint + "?database=" + database + "&useEncryption=true";
                     } else {
-                        // For HTTP, use port 80 (default) or extract from host if specified
-                        if (endpoint.contains(":")) {
-                            jdbcUrl = "jdbc:arrow-flight://" + endpoint + ":80?database=" + database + "&useEncryption=false";
-                        } else {
-                            jdbcUrl = "jdbc:arrow-flight://" + endpoint + ":80?database=" + database + "&useEncryption=false";
-                        }
+                        jdbcUrl = "jdbc:arrow-flight://" + endpoint + ":443?database=" + database + "&useEncryption=true";
                     }
-                    
-                    System.out.println("Flight SQL JDBC: Trying endpoint: " + endpoint);
-                    System.out.println("Flight SQL JDBC: Connecting to " + jdbcUrl);
-                    System.out.println("Flight SQL JDBC: Protocol: " + protocol + ", Host: " + host);
-            
-            // Translate InfluxDB 1.x syntax to modern SQL syntax for Flight SQL
-            String translatedQuery = translateQueryForInfluxDB3(query);
-            System.out.println("Flight SQL JDBC: Original query: " + query);
-            System.out.println("Flight SQL JDBC: Translated query: " + translatedQuery);
-            
-            // Use Flight SQL JDBC driver with proper authentication
-            try (java.sql.Connection connection = java.sql.DriverManager.getConnection(jdbcUrl, "token", token)) {
-                System.out.println("Flight SQL JDBC: Executing translated query: " + translatedQuery);
-                
-                // Execute query using JDBC
-                try (java.sql.Statement stmt = connection.createStatement();
-                     java.sql.ResultSet rs = stmt.executeQuery(translatedQuery)) {
-                    
-                    // Get metadata for column information
-                    java.sql.ResultSetMetaData metaData = rs.getMetaData();
-                    int columnCount = metaData.getColumnCount();
-                    
-                    // Extract column names
-                    List<String> columns = new ArrayList<>();
-                    for (int i = 1; i <= columnCount; i++) {
-                        String columnName = metaData.getColumnName(i);
-                        if (columnName == null || columnName.isEmpty()) {
-                            columnName = "column_" + i;
-                        }
-                        columns.add(columnName);
+                } else {
+                    // For HTTP, use port 80 (default) or extract from host if specified
+                    if (endpoint.contains(":")) {
+                        jdbcUrl = "jdbc:arrow-flight://" + endpoint + ":80?database=" + database + "&useEncryption=false";
+                    } else {
+                        jdbcUrl = "jdbc:arrow-flight://" + endpoint + ":80?database=" + database + "&useEncryption=false";
                     }
-                    
-                    // Collect results
-                    List<Object[]> results = new ArrayList<>();
-                    while (rs.next()) {
-                        Object[] row = new Object[columnCount];
-                        for (int i = 1; i <= columnCount; i++) {
-                            row[i-1] = rs.getObject(i);
-                        }
-                        results.add(row);
-                    }
-                    
-                    if (results.isEmpty()) {
-                        return "{\"results\":[{\"statement_id\":0,\"series\":[]}]}";
-                    }
-                    
-                    // Build JSON response in InfluxDB v1 format for compatibility
-                    StringBuilder jsonResponse = new StringBuilder();
-                    jsonResponse.append("{\"results\":[{\"statement_id\":0,\"series\":[{\"name\":\"result\",\"columns\":[");
-                    
-                    // Add column names
-                    for (int i = 0; i < columns.size(); i++) {
-                        if (i > 0) jsonResponse.append(",");
-                        jsonResponse.append("\"").append(columns.get(i)).append("\"");
-                    }
-                    jsonResponse.append("],\"values\":[");
-                    
-                    // Add data rows
-                    for (int i = 0; i < results.size(); i++) {
-                        if (i > 0) jsonResponse.append(",");
-                        jsonResponse.append("[");
-                        
-                        Object[] row = results.get(i);
-                        for (int j = 0; j < row.length; j++) {
-                            if (j > 0) jsonResponse.append(",");
-                            if (row[j] == null) {
-                                jsonResponse.append("null");
-                            } else {
-                                jsonResponse.append("\"").append(row[j].toString()).append("\"");
-                            }
-                        }
-                        jsonResponse.append("]");
-                    }
-                    
-                    jsonResponse.append("]}]}]}");
-                    
-                    String result = jsonResponse.toString();
-                    System.out.println("Flight SQL JDBC: Query successful, returned " + results.size() + " rows");
-                    return result;
                 }
                 
-                // If we reach here, the query was successful
-                System.out.println("Flight SQL JDBC: Query successful on endpoint: " + endpoint);
-                return result;
+                System.out.println("Flight SQL JDBC: Trying endpoint: " + endpoint);
+                System.out.println("Flight SQL JDBC: Connecting to " + jdbcUrl);
+                System.out.println("Flight SQL JDBC: Protocol: " + protocol + ", Host: " + host);
+                
+                // Translate InfluxDB 1.x syntax to modern SQL syntax for Flight SQL
+                String translatedQuery = translateQueryForInfluxDB3(query);
+                System.out.println("Flight SQL JDBC: Original query: " + query);
+                System.out.println("Flight SQL JDBC: Translated query: " + translatedQuery);
+                
+                // Use Flight SQL JDBC driver with proper authentication
+                try (java.sql.Connection connection = java.sql.DriverManager.getConnection(jdbcUrl, "token", token)) {
+                    System.out.println("Flight SQL JDBC: Executing translated query: " + translatedQuery);
+                    
+                    // Execute query using JDBC
+                    try (java.sql.Statement stmt = connection.createStatement();
+                         java.sql.ResultSet rs = stmt.executeQuery(translatedQuery)) {
+                        
+                        // Get metadata for column information
+                        java.sql.ResultSetMetaData metaData = rs.getMetaData();
+                        int columnCount = metaData.getColumnCount();
+                        
+                        // Extract column names
+                        List<String> columns = new ArrayList<>();
+                        for (int i = 1; i <= columnCount; i++) {
+                            String columnName = metaData.getColumnName(i);
+                            if (columnName == null || columnName.isEmpty()) {
+                                columnName = "column_" + i;
+                            }
+                            columns.add(columnName);
+                        }
+                        
+                        // Collect results
+                        List<Object[]> results = new ArrayList<>();
+                        while (rs.next()) {
+                            Object[] row = new Object[columnCount];
+                            for (int i = 1; i <= columnCount; i++) {
+                                row[i-1] = rs.getObject(i);
+                            }
+                            results.add(row);
+                        }
+                        
+                        if (results.isEmpty()) {
+                            return "{\"results\":[{\"statement_id\":0,\"series\":[]}]}";
+                        }
+                        
+                        // Build JSON response in InfluxDB v1 format for compatibility
+                        StringBuilder jsonResponse = new StringBuilder();
+                        jsonResponse.append("{\"results\":[{\"statement_id\":0,\"series\":[{\"name\":\"result\",\"columns\":[");
+                        
+                        // Add column names
+                        for (int i = 0; i < columns.size(); i++) {
+                            if (i > 0) jsonResponse.append(",");
+                            jsonResponse.append("\"").append(columns.get(i)).append("\"");
+                        }
+                        jsonResponse.append("],\"values\":[");
+                        
+                        // Add data rows
+                        for (int i = 0; i < results.size(); i++) {
+                            if (i > 0) jsonResponse.append(",");
+                            jsonResponse.append("[");
+                            
+                            Object[] row = results.get(i);
+                            for (int j = 0; j < row.length; j++) {
+                                if (j > 0) jsonResponse.append(",");
+                                if (row[j] == null) {
+                                    jsonResponse.append("null");
+                                } else {
+                                    jsonResponse.append("\"").append(row[j].toString()).append("\"");
+                                }
+                            }
+                            jsonResponse.append("]");
+                        }
+                        
+                        jsonResponse.append("]}]}]}");
+                        
+                        String result = jsonResponse.toString();
+                        System.out.println("Flight SQL JDBC: Query successful, returned " + results.size() + " rows");
+                        System.out.println("Flight SQL JDBC: Query successful on endpoint: " + endpoint);
+                        return result;
+                    }
+                }
                 
             } catch (Exception endpointError) {
                 System.err.println("Flight SQL JDBC failed for endpoint " + endpoint + ": " + endpointError.getMessage());
