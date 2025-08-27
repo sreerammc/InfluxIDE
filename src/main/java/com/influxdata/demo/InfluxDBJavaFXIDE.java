@@ -45,6 +45,8 @@ import java.util.Iterator;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Stream;
 import javafx.scene.image.Image;
 import javafx.scene.canvas.Canvas;
 import javafx.scene.canvas.GraphicsContext;
@@ -54,6 +56,7 @@ public class InfluxDBJavaFXIDE extends Application {
 
     private String protocol = "http"; // Default to HTTP
     private boolean skipSSLValidation = false; // Default to strict SSL
+    private String apiType = "rest"; // Default to REST API
     private String host;
     private String database;
     private String token;
@@ -71,6 +74,9 @@ public class InfluxDBJavaFXIDE extends Application {
     private Label statusLabel;
     private ProgressIndicator progressIndicator;
     private Stage mainStage;
+    
+    // InfluxDB 3 Java API client
+    private com.influxdb.v3.client.InfluxDBClient influxDB3Client;
     
     // Settings file constants
     private static final String SETTINGS_DIR = System.getProperty("user.home") + File.separator + ".influxdb-ide";
@@ -202,6 +208,18 @@ public class InfluxDBJavaFXIDE extends Application {
         // Set initial SSL box visibility based on loaded protocol
         sslBox.setVisible("https".equals(savedSettings.getProperty("protocol", "http")));
 
+        // API Type selection
+        HBox apiTypeBox = new HBox(10);
+        apiTypeBox.setAlignment(Pos.CENTER_LEFT);
+        Label apiTypeLabel = new Label("API Type:");
+        apiTypeLabel.setMinWidth(100);
+        ComboBox<String> apiTypeCombo = new ComboBox<>();
+        apiTypeCombo.getItems().addAll("REST API", "InfluxDB 3 Java API");
+        apiTypeCombo.setValue(savedSettings.getProperty("apiType", "REST API"));
+        apiTypeCombo.setPrefWidth(200);
+        apiTypeCombo.setTooltip(new Tooltip("REST API: Traditional HTTP queries, InfluxDB 3 API: Better performance with Flight SQL"));
+        apiTypeBox.getChildren().addAll(apiTypeLabel, apiTypeCombo);
+
         // Timeout configuration
         HBox timeoutBox = new HBox(10);
         timeoutBox.setAlignment(Pos.CENTER_LEFT);
@@ -270,7 +288,7 @@ public class InfluxDBJavaFXIDE extends Application {
         buttonBox.setAlignment(Pos.CENTER);
         buttonBox.getChildren().addAll(testButton, connectButton);
 
-        formBox.getChildren().addAll(protocolBox, sslBox, timeoutBox, hostBox, dbBox, tokenBox, authNote, settingsNote, buttonBox);
+        formBox.getChildren().addAll(protocolBox, sslBox, apiTypeBox, timeoutBox, hostBox, dbBox, tokenBox, authNote, settingsNote, buttonBox);
 
         // Status label
         Label statusLabel = new Label("Enter your InfluxDB connection details");
@@ -283,6 +301,7 @@ public class InfluxDBJavaFXIDE extends Application {
             // Extract current form values for testing
             String testProtocol = protocolCombo.getValue();
             boolean testSkipSSL = skipSSLValidationCheck.isSelected();
+            String testApiType = apiTypeCombo.getValue();
             String testHost = hostField.getText().trim();
             String testDatabase = databaseField.getText().trim();
             String testToken = tokenField.getText().trim();
@@ -302,8 +321,15 @@ public class InfluxDBJavaFXIDE extends Application {
             // Test connection asynchronously to keep UI responsive
             CompletableFuture.supplyAsync(() -> {
                 try {
-                    System.out.println("Test connection: Testing " + testProtocol + "://" + testHost + " with database " + testDatabase);
-                    String result = executeQueryHTTP(testProtocol, testHost, testToken, testDatabase, "SHOW MEASUREMENTS", testSkipSSL);
+                    System.out.println("Test connection: Testing " + testProtocol + "://" + testHost + " with database " + testDatabase + " using " + testApiType);
+                    
+                    String result;
+                    if ("InfluxDB 3 Java API".equals(testApiType)) {
+                        result = testInfluxDB3Connection(testProtocol, testHost, testToken, testDatabase, testSkipSSL);
+                    } else {
+                        result = executeQueryHTTP(testProtocol, testHost, testToken, testDatabase, "SHOW MEASUREMENTS", testSkipSSL);
+                    }
+                    
                     System.out.println("Test connection result: " + result.substring(0, Math.min(100, result.length())));
                     return result;
                 } catch (Exception ex) {
@@ -343,6 +369,7 @@ public class InfluxDBJavaFXIDE extends Application {
             // Store connection details in instance variables
             this.protocol = protocolCombo.getValue();
             this.skipSSLValidation = skipSSLValidationCheck.isSelected();
+            this.apiType = apiTypeCombo.getValue();
             this.host = hostField.getText().trim();
             this.database = databaseField.getText().trim();
             this.token = tokenField.getText().trim();
@@ -362,7 +389,11 @@ public class InfluxDBJavaFXIDE extends Application {
             // Validate connection asynchronously to keep UI responsive
             CompletableFuture.supplyAsync(() -> {
                 try {
-                    return executeQueryHTTP(this.protocol, this.host, this.token, this.database, "SHOW MEASUREMENTS", this.skipSSLValidation);
+                    if ("InfluxDB 3 Java API".equals(this.apiType)) {
+                        return testInfluxDB3Connection(this.protocol, this.host, this.token, this.database, this.skipSSLValidation);
+                    } else {
+                        return executeQueryHTTP(this.protocol, this.host, this.token, this.database, "SHOW MEASUREMENTS", this.skipSSLValidation);
+                    }
                 } catch (Exception ex) {
                     return "Error: " + ex.getMessage();
                 }
@@ -380,7 +411,7 @@ public class InfluxDBJavaFXIDE extends Application {
                         statusLabel.setTextFill(Color.GREEN);
                         
                         // Save settings for next time (excluding token for security)
-                        saveSettings(this.protocol, this.host, this.database, this.skipSSLValidation, "2 minutes");
+                        saveSettings(this.protocol, this.host, this.database, this.skipSSLValidation, "2 minutes", this.apiType);
                         
                         connectionStage.close();
                     }
@@ -964,7 +995,12 @@ public class InfluxDBJavaFXIDE extends Application {
                     statusLabel.setText("Executing query (this may take a few minutes for large datasets)...");
                 });
                 
-                return executeQueryHTTP(protocol, host, token, database, query, skipSSLValidation);
+                // Execute query using selected API type
+                if ("InfluxDB 3 Java API".equals(apiType)) {
+                    return executeQueryInfluxDB3(protocol, host, token, database, query, skipSSLValidation);
+                } else {
+                    return executeQueryHTTP(protocol, host, token, database, query, skipSSLValidation);
+                }
             } catch (Exception ex) {
                 return "Error: " + ex.getMessage();
             }
@@ -1131,6 +1167,81 @@ public class InfluxDBJavaFXIDE extends Application {
             throw e;
         } finally {
             connection.disconnect();
+        }
+    }
+    
+    /**
+     * Executes an InfluxDB query using InfluxDB 3 Java API
+     * Uses Flight SQL for better performance and more features
+     * Returns the JSON response as a string
+     */
+    private String executeQueryInfluxDB3(String protocol, String host, String token, String database, String query, boolean skipSSLValidation) throws Exception {
+        try {
+            // Construct the connection URL
+            String url = protocol + "://" + host;
+            System.out.println("InfluxDB 3 API: Connecting to " + url);
+            
+            // Create InfluxDB 3 client
+            try (com.influxdb.v3.client.InfluxDBClient client = com.influxdb.v3.client.InfluxDBClient.getInstance(url, token.toCharArray(), database)) {
+                System.out.println("InfluxDB 3 API: Executing query: " + query);
+                
+                // Execute query using Flight SQL
+                try (Stream<Object[]> stream = client.query(query)) {
+                    // Convert results to JSON format for consistency with REST API
+                    List<Object[]> results = stream.toList();
+                    
+                    if (results.isEmpty()) {
+                        return "{\"results\":[{\"statement_id\":0,\"series\":[]}]}";
+                    }
+                    
+                    // Get column names from first row (assuming all rows have same structure)
+                    Object[] firstRow = results.get(0);
+                    List<String> columns = new ArrayList<>();
+                    
+                    // For now, use generic column names since InfluxDB 3 doesn't provide them directly
+                    for (int i = 0; i < firstRow.length; i++) {
+                        columns.add("column_" + i);
+                    }
+                    
+                    // Build JSON response in InfluxDB v1 format for compatibility
+                    StringBuilder jsonResponse = new StringBuilder();
+                    jsonResponse.append("{\"results\":[{\"statement_id\":0,\"series\":[{\"name\":\"result\",\"columns\":[");
+                    
+                    // Add column names
+                    for (int i = 0; i < columns.size(); i++) {
+                        if (i > 0) jsonResponse.append(",");
+                        jsonResponse.append("\"").append(columns.get(i)).append("\"");
+                    }
+                    jsonResponse.append("],\"values\":[");
+                    
+                    // Add data rows
+                    for (int i = 0; i < results.size(); i++) {
+                        if (i > 0) jsonResponse.append(",");
+                        jsonResponse.append("[");
+                        
+                        Object[] row = results.get(i);
+                        for (int j = 0; j < row.length; j++) {
+                            if (j > 0) jsonResponse.append(",");
+                            if (row[j] == null) {
+                                jsonResponse.append("null");
+                            } else {
+                                jsonResponse.append("\"").append(row[j].toString()).append("\"");
+                            }
+                        }
+                        jsonResponse.append("]");
+                    }
+                    
+                    jsonResponse.append("]}]}]}");
+                    
+                    String result = jsonResponse.toString();
+                    System.out.println("InfluxDB 3 API: Query successful, returned " + results.size() + " rows");
+                    return result;
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("InfluxDB 3 API query failed: " + e.getMessage());
+            e.printStackTrace();
+            throw e;
         }
     }
 
@@ -1814,7 +1925,7 @@ public class InfluxDBJavaFXIDE extends Application {
      * Stores protocol, host, database, and SSL validation preference
      * Note: API token is NOT saved for security reasons
      */
-    private void saveSettings(String protocol, String host, String database, boolean skipSSLValidation, String queryTimeout) {
+    private void saveSettings(String protocol, String host, String database, boolean skipSSLValidation, String queryTimeout, String apiType) {
         try {
             // Create settings directory in user home if it doesn't exist
             File settingsDir = new File(SETTINGS_DIR);
@@ -1829,6 +1940,7 @@ public class InfluxDBJavaFXIDE extends Application {
             props.setProperty("database", database);
             props.setProperty("skipSSLValidation", String.valueOf(skipSSLValidation));
             props.setProperty("queryTimeout", queryTimeout);
+            props.setProperty("apiType", apiType);
             
             // Save properties to file with descriptive header comment
             try (FileOutputStream out = new FileOutputStream(SETTINGS_FILE)) {
@@ -1853,6 +1965,7 @@ public class InfluxDBJavaFXIDE extends Application {
         props.setProperty("database", "");
         props.setProperty("skipSSLValidation", "false");
         props.setProperty("queryTimeout", "2 minutes");
+        props.setProperty("apiType", "REST API");
         
         try {
             // Check if settings file exists in user home directory
@@ -1892,6 +2005,36 @@ public class InfluxDBJavaFXIDE extends Application {
         } else {
             // Default to 2 minutes if parsing fails
             return 120000;
+        }
+    }
+    
+    /**
+     * Tests InfluxDB 3 Java API connection
+     * Creates a client and runs a simple test query
+     */
+    private String testInfluxDB3Connection(String protocol, String host, String token, String database, boolean skipSSLValidation) {
+        try {
+            // Construct the connection URL
+            String url = protocol + "://" + host;
+            System.out.println("Testing InfluxDB 3 connection to: " + url);
+            
+            // Create InfluxDB 3 client
+            try (com.influxdb.v3.client.InfluxDBClient client = com.influxdb.v3.client.InfluxDBClient.getInstance(url, token.toCharArray(), database)) {
+                // Test with a simple query
+                String testQuery = "SHOW MEASUREMENTS";
+                System.out.println("Testing query: " + testQuery);
+                
+                try (Stream<Object[]> stream = client.query(testQuery)) {
+                    // Convert stream to list to check if it works
+                    List<Object[]> results = stream.toList();
+                    System.out.println("InfluxDB 3 test successful, got " + results.size() + " results");
+                    return "Success: InfluxDB 3 connection established with " + results.size() + " measurements";
+                }
+            }
+        } catch (Exception e) {
+            System.err.println("InfluxDB 3 connection test failed: " + e.getMessage());
+            e.printStackTrace();
+            return "Error: " + e.getMessage();
         }
     }
 
