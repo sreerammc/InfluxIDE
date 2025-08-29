@@ -100,6 +100,9 @@ public class InfluxDBJavaFXIDE extends Application {
         // Set application icon for better visual identity
         setApplicationIcon(primaryStage);
         
+        // Set JVM timezone based on user settings
+        setJVMTimezone();
+        
         // Show connection dialog first - exit if user cancels
         if (!showConnectionDialog()) {
             System.exit(0);
@@ -275,6 +278,54 @@ public class InfluxDBJavaFXIDE extends Application {
         Label authNote = new Label("⚠️ API Key only - OAuth/SAML not supported");
         authNote.setStyle("-fx-font-size: 10px; -fx-text-fill: #FF6B35; -fx-font-style: italic;");
         
+        // Timezone conversion setting
+        VBox timezoneBox = new VBox(5);
+        timezoneBox.setAlignment(Pos.CENTER_LEFT);
+        
+        // Timezone conversion checkbox
+        CheckBox timezoneConversionCheck = new CheckBox("Convert UTC timestamps to timezone");
+        timezoneConversionCheck.setSelected(Boolean.parseBoolean(savedSettings.getProperty("timezoneConversion", "true")));
+        timezoneConversionCheck.setTooltip(new Tooltip("When enabled, Flight SQL and Java API timestamps will be converted from UTC to the selected timezone"));
+        
+        // Timezone selection combo box
+        HBox timezoneSelectionBox = new HBox(10);
+        timezoneSelectionBox.setAlignment(Pos.CENTER_LEFT);
+        Label timezoneLabel = new Label("Timezone:");
+        timezoneLabel.setMinWidth(100);
+        ComboBox<String> timezoneCombo = new ComboBox<>();
+        
+        // Populate with common timezones
+        timezoneCombo.getItems().addAll(
+            "System Default (Local)",
+            "UTC",
+            "Europe/London",
+            "Europe/Paris", 
+            "Europe/Berlin",
+            "America/New_York",
+            "America/Chicago",
+            "America/Denver",
+            "America/Los_Angeles",
+            "Asia/Tokyo",
+            "Asia/Shanghai",
+            "Asia/Kolkata",
+            "Australia/Sydney",
+            "Pacific/Auckland"
+        );
+        
+        // Set default timezone from settings or use system default
+        String savedTimezone = savedSettings.getProperty("selectedTimezone", "System Default (Local)");
+        timezoneCombo.setValue(savedTimezone);
+        timezoneCombo.setPrefWidth(250);
+        timezoneCombo.setTooltip(new Tooltip("Select the timezone for timestamp conversion. 'System Default' uses your computer's local timezone."));
+        
+        // Enable/disable timezone selection based on checkbox
+        timezoneCombo.setDisable(!timezoneConversionCheck.isSelected());
+        timezoneConversionCheck.setOnAction(e -> timezoneCombo.setDisable(!timezoneConversionCheck.isSelected()));
+        
+        timezoneSelectionBox.getChildren().addAll(timezoneLabel, timezoneCombo);
+        
+        timezoneBox.getChildren().addAll(timezoneConversionCheck, timezoneSelectionBox);
+        
         // Settings persistence note
         Label settingsNote = new Label("💾 Connection details (except token) will be remembered for next time");
         settingsNote.setStyle("-fx-font-size: 10px; -fx-text-fill: #666; -fx-font-style: italic;");
@@ -295,7 +346,7 @@ public class InfluxDBJavaFXIDE extends Application {
         buttonBox.setAlignment(Pos.CENTER);
         buttonBox.getChildren().addAll(testButton, connectButton);
 
-        formBox.getChildren().addAll(protocolBox, sslBox, apiTypeBox, timeoutBox, hostBox, dbBox, tokenBox, authNote, settingsNote, buttonBox);
+        formBox.getChildren().addAll(protocolBox, sslBox, apiTypeBox, timeoutBox, hostBox, dbBox, tokenBox, authNote, timezoneBox, settingsNote, buttonBox);
 
         // Status label
         Label statusLabel = new Label("Enter your InfluxDB connection details");
@@ -418,7 +469,7 @@ public class InfluxDBJavaFXIDE extends Application {
                         statusLabel.setTextFill(Color.GREEN);
                         
                         // Save settings for next time (excluding token for security)
-                        saveSettings(this.protocol, this.host, this.database, this.skipSSLValidation, "2 minutes", this.apiType);
+                        saveSettings(this.protocol, this.host, this.database, this.skipSSLValidation, "2 minutes", this.apiType, timezoneConversionCheck.isSelected(), timezoneCombo.getValue());
                         
                         connectionStage.close();
                     }
@@ -1358,13 +1409,58 @@ public class InfluxDBJavaFXIDE extends Application {
                                 if (row[j] == null) {
                                     jsonResponse.append("null");
                                 } else {
+                                    // Check if this is a timestamp column and convert from UTC to local timezone
+                                    String columnName = metaData.getColumnName(j + 1);
+                                    Object value = row[j];
+                                    String stringValue;
+                                    
+                                    if (columnName != null && (columnName.equalsIgnoreCase("time") || 
+                                        columnName.toLowerCase().contains("timestamp") || 
+                                        columnName.toLowerCase().contains("date")) && 
+                                        Boolean.parseBoolean(loadSettings().getProperty("timezoneConversion", "true"))) {
+                                        try {
+                                            // Try to parse as timestamp and convert to local timezone
+                                            if (value instanceof java.sql.Timestamp) {
+                                                java.sql.Timestamp ts = (java.sql.Timestamp) value;
+                                                // Convert UTC to selected timezone
+                                                java.time.ZonedDateTime utcTime = ts.toInstant().atZone(java.time.ZoneOffset.UTC);
+                                                java.time.ZonedDateTime targetTime = utcTime.withZoneSameInstant(getSelectedTimezone());
+                                                stringValue = targetTime.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"));
+                                                System.out.println("Flight SQL JDBC: Converted timestamp from UTC " + utcTime + " to " + getSelectedTimezone() + " " + targetTime);
+                                            } else if (value instanceof java.sql.Date) {
+                                                java.sql.Date date = (java.sql.Date) value;
+                                                // For dates, just convert to selected timezone
+                                                java.time.LocalDate localDate = date.toLocalDate();
+                                                stringValue = localDate.toString();
+                                            } else {
+                                                // Try to parse string timestamp
+                                                stringValue = value.toString();
+                                                if (stringValue.matches("\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}.*")) {
+                                                    try {
+                                                        java.time.Instant instant = java.time.Instant.parse(stringValue);
+                                                        java.time.ZonedDateTime targetTime = instant.atZone(getSelectedTimezone());
+                                                        stringValue = targetTime.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss.SSS"));
+                                                        System.out.println("Flight SQL JDBC: Converted string timestamp from UTC " + instant + " to " + getSelectedTimezone() + " " + targetTime);
+                                                    } catch (Exception e) {
+                                                        // If parsing fails, use original value
+                                                        stringValue = value.toString();
+                                                    }
+                                                }
+                                            }
+                                        } catch (Exception e) {
+                                            // If timestamp conversion fails, use original value
+                                            stringValue = value.toString();
+                                            System.err.println("Flight SQL JDBC: Failed to convert timestamp for column " + columnName + ": " + e.getMessage());
+                                        }
+                                    } else {
+                                        stringValue = value.toString();
+                                    }
+                                    
                                     // Properly escape JSON strings to handle special characters
-                                    String value = row[j].toString();
-                                    // Escape quotes and backslashes
-                                    value = value.replace("\\", "\\\\").replace("\"", "\\\"");
+                                    stringValue = stringValue.replace("\\", "\\\\").replace("\"", "\\\"");
                                     // Handle newlines and other control characters
-                                    value = value.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
-                                    jsonResponse.append("\"").append(value).append("\"");
+                                    stringValue = stringValue.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
+                                    jsonResponse.append("\"").append(stringValue).append("\"");
                                 }
                             }
                             jsonResponse.append("]");
@@ -2363,7 +2459,7 @@ public class InfluxDBJavaFXIDE extends Application {
      * Stores protocol, host, database, and SSL validation preference
      * Note: API token is NOT saved for security reasons
      */
-    private void saveSettings(String protocol, String host, String database, boolean skipSSLValidation, String queryTimeout, String apiType) {
+    private void saveSettings(String protocol, String host, String database, boolean skipSSLValidation, String queryTimeout, String apiType, boolean timezoneConversion, String selectedTimezone) {
         try {
             // Create settings directory in user home if it doesn't exist
             File settingsDir = new File(SETTINGS_DIR);
@@ -2379,6 +2475,8 @@ public class InfluxDBJavaFXIDE extends Application {
             props.setProperty("skipSSLValidation", String.valueOf(skipSSLValidation));
             props.setProperty("queryTimeout", queryTimeout);
             props.setProperty("apiType", apiType);
+            props.setProperty("timezoneConversion", String.valueOf(timezoneConversion));
+            props.setProperty("selectedTimezone", selectedTimezone);
             
             // Save properties to file with descriptive header comment
             try (FileOutputStream out = new FileOutputStream(SETTINGS_FILE)) {
@@ -2404,6 +2502,8 @@ public class InfluxDBJavaFXIDE extends Application {
         props.setProperty("skipSSLValidation", "false");
         props.setProperty("queryTimeout", "2 minutes");
         props.setProperty("apiType", "Flight SQL");
+        props.setProperty("timezoneConversion", "true");
+        props.setProperty("selectedTimezone", "System Default (Local)");
         
         try {
             // Check if settings file exists in user home directory
@@ -2443,6 +2543,28 @@ public class InfluxDBJavaFXIDE extends Application {
         } else {
             // Default to 2 minutes if parsing fails
             return 120000;
+        }
+    }
+    
+    /**
+     * Gets the selected timezone for timestamp conversion
+     * Returns the system default timezone if "System Default (Local)" is selected
+     */
+    private java.time.ZoneId getSelectedTimezone() {
+        Properties settings = loadSettings();
+        String selectedTimezone = settings.getProperty("selectedTimezone", "System Default (Local)");
+        
+        if ("System Default (Local)".equals(selectedTimezone)) {
+            return java.time.ZoneId.systemDefault();
+        } else if ("UTC".equals(selectedTimezone)) {
+            return java.time.ZoneOffset.UTC;
+        } else {
+            try {
+                return java.time.ZoneId.of(selectedTimezone);
+            } catch (Exception e) {
+                System.err.println("Invalid timezone: " + selectedTimezone + ", falling back to system default");
+                return java.time.ZoneId.systemDefault();
+            }
         }
     }
     
@@ -2580,6 +2702,28 @@ public class InfluxDBJavaFXIDE extends Application {
         return trimmedQuery;
     }
 
+    /**
+     * Sets the JVM default timezone based on user settings
+     * This ensures consistent timezone handling across the application
+     */
+    private void setJVMTimezone() {
+        try {
+            Properties settings = loadSettings();
+            String selectedTimezone = settings.getProperty("selectedTimezone", "System Default (Local)");
+            
+            if (!"System Default (Local)".equals(selectedTimezone)) {
+                java.time.ZoneId zoneId = getSelectedTimezone();
+                java.util.TimeZone.setDefault(java.util.TimeZone.getTimeZone(zoneId));
+                System.out.println("JVM timezone set to: " + zoneId + " (" + zoneId.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.getDefault()) + ")");
+            } else {
+                System.out.println("Using system default timezone: " + java.time.ZoneId.systemDefault());
+            }
+        } catch (Exception e) {
+            System.err.println("Failed to set JVM timezone: " + e.getMessage());
+            System.out.println("Using system default timezone: " + java.time.ZoneId.systemDefault());
+        }
+    }
+    
     public static void main(String[] args) {
         launch(args);
     }
