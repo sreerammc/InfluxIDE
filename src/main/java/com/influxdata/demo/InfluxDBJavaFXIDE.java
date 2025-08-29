@@ -1313,13 +1313,24 @@ public class InfluxDBJavaFXIDE extends Application {
                         
                         // Collect results
                         List<Object[]> results = new ArrayList<>();
+                        int rowCount = 0;
                         while (rs.next()) {
                             Object[] row = new Object[columnCount];
                             for (int i = 1; i <= columnCount; i++) {
-                                row[i-1] = rs.getObject(i);
+                                Object value = rs.getObject(i);
+                                row[i-1] = value;
+                                
+                                // Debug logging for first few rows to see data structure
+                                if (rowCount < 3) {
+                                    System.out.println("Flight SQL JDBC: Row " + rowCount + ", Col " + i + " (" + metaData.getColumnName(i) + "): " + 
+                                        (value != null ? value.toString() : "null") + 
+                                        (value != null && value.toString().length() > 100 ? " [TRUNCATED at 100 chars]" : ""));
+                                }
                             }
                             results.add(row);
+                            rowCount++;
                         }
+                        System.out.println("Flight SQL JDBC: Collected " + results.size() + " rows with " + columnCount + " columns");
                         
                         if (results.isEmpty()) {
                             return "{\"results\":[{\"statement_id\":0,\"series\":[]}]}";
@@ -1347,7 +1358,13 @@ public class InfluxDBJavaFXIDE extends Application {
                                 if (row[j] == null) {
                                     jsonResponse.append("null");
                                 } else {
-                                    jsonResponse.append("\"").append(row[j].toString()).append("\"");
+                                    // Properly escape JSON strings to handle special characters
+                                    String value = row[j].toString();
+                                    // Escape quotes and backslashes
+                                    value = value.replace("\\", "\\\\").replace("\"", "\\\"");
+                                    // Handle newlines and other control characters
+                                    value = value.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t");
+                                    jsonResponse.append("\"").append(value).append("\"");
                                 }
                             }
                             jsonResponse.append("]");
@@ -1358,6 +1375,17 @@ public class InfluxDBJavaFXIDE extends Application {
                         String result = jsonResponse.toString();
                         System.out.println("Flight SQL JDBC: Query successful, returned " + results.size() + " rows");
                         System.out.println("Flight SQL JDBC: Query successful on endpoint: " + endpoint);
+                        
+                        // Validate JSON before returning
+                        try {
+                            new JSONObject(result);
+                            System.out.println("Flight SQL JDBC: Generated JSON is valid");
+                        } catch (Exception jsonError) {
+                            System.err.println("Flight SQL JDBC: Generated JSON is invalid: " + jsonError.getMessage());
+                            System.err.println("JSON preview (first 500 chars): " + result.substring(0, Math.min(500, result.length())));
+                            throw new Exception("Failed to generate valid JSON from Flight SQL results: " + jsonError.getMessage());
+                        }
+                        
                         return result;
                     }
                 }
