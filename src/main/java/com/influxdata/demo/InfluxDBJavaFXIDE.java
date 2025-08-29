@@ -170,12 +170,14 @@ public class InfluxDBJavaFXIDE extends Application {
         connectionStage.initModality(Modality.APPLICATION_MODAL);
         connectionStage.setTitle("InfluxDB Connection Setup");
         connectionStage.setResizable(false);
+        connectionStage.setMinHeight(700);
+        connectionStage.setMinWidth(600);
         
         // Set the same application icon for consistency
         setApplicationIcon(connectionStage);
 
-        VBox connectionLayout = new VBox(20);
-        connectionLayout.setPadding(new Insets(30));
+        VBox connectionLayout = new VBox(25);
+        connectionLayout.setPadding(new Insets(35));
         connectionLayout.setAlignment(Pos.CENTER);
         connectionLayout.setStyle("-fx-background-color: #f5f5f5;");
 
@@ -185,8 +187,8 @@ public class InfluxDBJavaFXIDE extends Application {
         titleLabel.setTextFill(Color.DARKBLUE);
 
         // Connection form
-        VBox formBox = new VBox(15);
-        formBox.setPadding(new Insets(20));
+        VBox formBox = new VBox(20);
+        formBox.setPadding(new Insets(25));
         formBox.setStyle("-fx-background-color: white; -fx-border-color: #cccccc; -fx-border-radius: 5; -fx-background-radius: 5;");
 
         // Protocol field
@@ -342,8 +344,9 @@ public class InfluxDBJavaFXIDE extends Application {
         connectButton.setPrefWidth(120);
         connectButton.setPrefHeight(35);
 
-        HBox buttonBox = new HBox(20);
+        HBox buttonBox = new HBox(25);
         buttonBox.setAlignment(Pos.CENTER);
+        buttonBox.setPadding(new Insets(20, 0, 0, 0));
         buttonBox.getChildren().addAll(testButton, connectButton);
 
         formBox.getChildren().addAll(protocolBox, sslBox, apiTypeBox, timeoutBox, hostBox, dbBox, tokenBox, authNote, timezoneBox, settingsNote, buttonBox);
@@ -485,7 +488,7 @@ public class InfluxDBJavaFXIDE extends Application {
             });
         });
 
-        Scene connectionScene = new Scene(connectionLayout, 500, 500);
+        Scene connectionScene = new Scene(connectionLayout, 600, 700);
         connectionStage.setScene(connectionScene);
         connectionStage.showAndWait();
 
