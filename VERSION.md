@@ -13,13 +13,15 @@ This version represents a complete transformation from a monolithic application 
 - **Memory Management**: Built-in safeguards and memory optimization
 - **Asynchronous Operations**: Non-blocking UI during long-running operations
 - **Professional Styling**: Modern CSS styling with consistent design language
+- **🆕 Comprehensive Logging System**: Professional logging with file rotation and categorization
 
 #### 🏗️ Architecture Improvements
-- **Package Structure**: Organized into logical packages (config, service, ui, model, exception)
+- **Package Structure**: Organized into logical packages (config, service, ui, model, exception, util)
 - **Service Layer**: Dedicated services for InfluxDB operations, data processing, and export
 - **Configuration Management**: Centralized configuration with validation
 - **Type Safety**: Enums replace string constants for better type safety
 - **Dependency Injection**: Proper service injection and dependency management
+- **🆕 Logging Infrastructure**: Centralized logging service with multiple log categories
 
 #### 🔧 Technical Improvements
 - **SOLID Principles**: Single responsibility, open/closed, dependency inversion
@@ -27,6 +29,16 @@ This version represents a complete transformation from a monolithic application 
 - **Resource Management**: Proper cleanup and resource handling
 - **Testing Support**: Services can be unit tested independently
 - **Extensibility**: Easy to add new features without modifying existing code
+- **🆕 Performance Monitoring**: Built-in timing and performance logging for all operations
+
+#### 📊 Logging System Features
+- **Multiple Log Categories**: Application, Connection, Query, UI, Export, Performance
+- **File Rotation**: Automatic log file rotation by size (10MB) and time (24 hours)
+- **Log Retention**: Configurable retention policy (5 rotated files max)
+- **Performance Tracking**: Query execution time, connection duration, export timing
+- **Exception Logging**: Comprehensive error tracking with stack traces
+- **Log Levels**: DEBUG, INFO, WARNING, ERROR with configurable thresholds
+- **Separate Log Files**: Dedicated files for different log types (queries, errors, performance)
 
 #### 📦 Dependencies
 - **JavaFX**: 24.0.2 (latest)
@@ -37,7 +49,8 @@ This version represents a complete transformation from a monolithic application 
 #### 🎯 Target Audience
 - **Enterprise Users**: Professional-grade application suitable for production use
 - **Developers**: Clean, maintainable codebase for future development
-- **DevOps Teams**: Reliable, scalable application for database management
+- **DevOps Teams**: Reliable, scalable application with comprehensive logging
+- **System Administrators**: Detailed logs for monitoring and troubleshooting
 
 ---
 
@@ -56,6 +69,7 @@ This version represents a complete transformation from a monolithic application 
 - Limited error handling
 - No memory management
 - Difficult to test
+- No logging system
 
 ---
 
@@ -71,12 +85,14 @@ This version represents a complete transformation from a monolithic application 
 2. **Update Main Class**: Change references to new main class
 3. **Review Configuration**: New settings format with validation
 4. **Test Functionality**: Verify all features work as expected
+5. **🆕 Monitor Logs**: Check new log files in `~/.influxdb-ide/logs/`
 
 ### Benefits of Upgrade
 - **Maintainability**: Much easier to maintain and modify
 - **Reliability**: Better error handling and memory management
 - **Performance**: Asynchronous operations and optimized processing
 - **Professional**: Enterprise-grade architecture and code quality
+- **🆕 Observability**: Comprehensive logging for monitoring and debugging
 
 ---
 
@@ -85,17 +101,20 @@ This version represents a complete transformation from a monolithic application 
 ### Version 2.1.0 (Planned)
 - Query history and favorites
 - Connection pooling
-- Performance monitoring
+- Performance monitoring dashboard
 - Advanced export formats
+- Log analysis and reporting tools
 
 ### Version 2.2.0 (Planned)
 - Plugin system
 - Custom themes
 - Advanced query builder
 - Real-time data streaming
+- Centralized log aggregation
 
 ### Version 3.0.0 (Long-term)
 - Multi-database support
 - Cloud integration
 - Team collaboration features
-- Advanced analytics 
+- Advanced analytics
+- Enterprise logging and monitoring 

@@ -7,6 +7,7 @@ import com.influxdata.demo.model.Protocol;
 import com.influxdata.demo.model.QueryTimeout;
 import com.influxdata.demo.service.SettingsService;
 import com.influxdata.demo.service.TimezoneService;
+import com.influxdata.demo.util.Log;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
 import javafx.scene.Scene;
@@ -59,6 +60,8 @@ public class ConnectionDialog {
      * @return true if connection successful, false if cancelled
      */
     public boolean showDialog() {
+        Log.uiInfo("Connection dialog opened");
+        
         // Load saved settings
         config = settingsService.loadSettings();
         
@@ -75,6 +78,12 @@ public class ConnectionDialog {
         Scene scene = new Scene(dialogContent, UIConstants.CONNECTION_DIALOG_WIDTH, UIConstants.CONNECTION_DIALOG_HEIGHT);
         dialogStage.setScene(scene);
         dialogStage.showAndWait();
+        
+        if (connectionSuccessful) {
+            Log.uiInfo("Connection dialog closed successfully");
+        } else {
+            Log.uiInfo("Connection dialog cancelled by user");
+        }
         
         return connectionSuccessful;
     }
@@ -410,7 +419,7 @@ public class ConnectionDialog {
     }
     
     /**
-     * Handle test connection
+     * Handle test connection button
      */
     private void handleTestConnection() {
         // Extract current form values
@@ -418,13 +427,18 @@ public class ConnectionDialog {
         
         // Validate configuration
         if (!testConfig.isValid()) {
+            Log.connectionWarning("Connection test attempted with invalid configuration");
             updateStatus("Please fill in all fields", false);
             return;
         }
         
+        Log.connectionInfo("Testing connection to " + testConfig.getHost() + "/" + testConfig.getDatabase() + " using " + testConfig.getApiType());
+        
         // Disable test button and show testing status
         testButton.setDisable(true);
         updateStatus("Testing connection...", true);
+        
+        long startTime = System.currentTimeMillis();
         
         // Test connection asynchronously
         CompletableFuture.supplyAsync(() -> {
@@ -436,11 +450,15 @@ public class ConnectionDialog {
             }
         }).thenAcceptAsync(result -> {
             javafx.application.Platform.runLater(() -> {
+                long testTime = System.currentTimeMillis() - startTime;
                 testButton.setDisable(false);
+                
                 if (result.startsWith("Error:")) {
+                    Log.connectionError("Connection test failed after " + testTime + "ms: " + result);
                     updateStatus("Connection test failed!", false);
                     showErrorDialog("Test Connection Failed", result);
                 } else {
+                    Log.connectionInfo("Connection test successful after " + testTime + "ms");
                     updateStatus("Connection test successful! Click Connect to continue.", true);
                 }
             });
@@ -456,16 +474,22 @@ public class ConnectionDialog {
         
         // Validate configuration
         if (!config.isValid()) {
+            Log.connectionWarning("Connect attempted with invalid configuration");
             updateStatus("Please fill in all fields", false);
             return;
         }
         
+        Log.connectionInfo("Saving connection configuration for " + config.getHost() + "/" + config.getDatabase());
+        
         // Save settings
         try {
             settingsService.saveSettings(config);
+            Log.connectionInfo("Connection configuration saved successfully");
             connectionSuccessful = true;
             dialogStage.close();
         } catch (Exception e) {
+            Log.connectionError("Failed to save connection settings: " + e.getMessage());
+            Log.logException("connection", "Settings save error", e);
             updateStatus("Failed to save settings", false);
             showErrorDialog("Settings Error", "Failed to save settings: " + e.getMessage());
         }

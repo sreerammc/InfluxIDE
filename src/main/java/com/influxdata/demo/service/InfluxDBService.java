@@ -6,6 +6,7 @@ import com.influxdata.demo.exception.QueryExecutionException;
 import com.influxdata.demo.model.ApiType;
 import com.influxdata.demo.model.Protocol;
 import com.influxdata.demo.model.QueryTimeout;
+import com.influxdata.demo.util.Log;
 
 import java.io.BufferedReader;
 import java.io.InputStreamReader;
@@ -42,18 +43,33 @@ public class InfluxDBService {
      * @throws ConnectionException if connection fails
      */
     public boolean testConnection() throws ConnectionException {
+        long startTime = System.currentTimeMillis();
+        Log.connectionInfo("Testing connection to " + config.getHost() + "/" + config.getDatabase() + " using " + config.getApiType());
+        
         try {
+            boolean result = false;
             switch (config.getApiType()) {
                 case FLIGHT_SQL:
-                    return testFlightSQLConnection();
+                    result = testFlightSQLConnection();
+                    break;
                 case INFLUXDB_3_API:
-                    return testInfluxDB3Connection();
+                    result = testInfluxDB3Connection();
+                    break;
                 case REST_API:
-                    return testRESTConnection();
+                    result = testRESTConnection();
+                    break;
                 default:
                     throw new ConnectionException("Unknown API type: " + config.getApiType());
             }
+            
+            long duration = System.currentTimeMillis() - startTime;
+            Log.logConnectionAttempt(config.getHost(), config.getDatabase(), result, duration);
+            
+            return result;
         } catch (Exception e) {
+            long duration = System.currentTimeMillis() - startTime;
+            Log.connectionError("Connection test failed after " + duration + "ms: " + e.getMessage());
+            Log.logException("connection", "Connection test error", e);
             throw new ConnectionException("Connection test failed", e);
         }
     }
@@ -65,18 +81,33 @@ public class InfluxDBService {
      * @throws QueryExecutionException if query execution fails
      */
     public String executeQuery(String query) throws QueryExecutionException {
+        long startTime = System.currentTimeMillis();
+        Log.queryInfo("Executing query using " + config.getApiType() + ": " + query.substring(0, Math.min(query.length(), 100)) + (query.length() > 100 ? "..." : ""));
+        
         try {
+            String result = null;
             switch (config.getApiType()) {
                 case FLIGHT_SQL:
-                    return executeFlightSQLQuery(query);
+                    result = executeFlightSQLQuery(query);
+                    break;
                 case INFLUXDB_3_API:
-                    return executeInfluxDB3Query(query);
+                    result = executeInfluxDB3Query(query);
+                    break;
                 case REST_API:
-                    return executeRESTQuery(query);
+                    result = executeRESTQuery(query);
+                    break;
                 default:
                     throw new QueryExecutionException("Unknown API type: " + config.getApiType());
             }
+            
+            long duration = System.currentTimeMillis() - startTime;
+            Log.queryInfo("Query executed successfully in " + duration + "ms");
+            
+            return result;
         } catch (Exception e) {
+            long duration = System.currentTimeMillis() - startTime;
+            Log.queryError("Query execution failed after " + duration + "ms: " + e.getMessage());
+            Log.logException("query", "Query execution error", e);
             throw new QueryExecutionException("Query execution failed", e);
         }
     }

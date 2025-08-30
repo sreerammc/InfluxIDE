@@ -1,6 +1,7 @@
 package com.influxdata.demo.service;
 
 import com.influxdata.demo.exception.ApplicationException;
+import com.influxdata.demo.util.Log;
 
 import java.io.File;
 import java.io.FileWriter;
@@ -30,9 +31,8 @@ public class ExportService {
      * @throws ApplicationException if export fails
      */
     public String exportToCSV(List<Map<String, Object>> data, String filename) throws ApplicationException {
-        if (data == null || data.isEmpty()) {
-            throw new ApplicationException("No data to export");
-        }
+        long startTime = System.currentTimeMillis();
+        Log.exportInfo("Starting CSV export of " + data.size() + " records to " + filename);
         
         try {
             // Generate filename if not provided
@@ -45,15 +45,21 @@ public class ExportService {
                 filename += CSV_EXTENSION;
             }
             
-            // Create file
-            File exportFile = new File(filename);
+            File file = new File(filename);
             
             // Export data
-            exportDataToCSV(data, exportFile);
+            exportDataToCSV(data, file);
             
-            return exportFile.getAbsolutePath();
+            long duration = System.currentTimeMillis() - startTime;
+            Log.logExportOperation("CSV", data.size(), duration, filename);
+            Log.exportInfo("CSV export completed successfully in " + duration + "ms");
+            
+            return file.getAbsolutePath();
             
         } catch (Exception e) {
+            long duration = System.currentTimeMillis() - startTime;
+            Log.exportError("CSV export failed after " + duration + "ms: " + e.getMessage());
+            Log.logException("export", "CSV export error", e);
             throw new ApplicationException("Failed to export to CSV: " + e.getMessage(), e);
         }
     }
@@ -75,10 +81,13 @@ public class ExportService {
      * @return CompletableFuture with the export result
      */
     public java.util.concurrent.CompletableFuture<String> exportToCSVAsync(List<Map<String, Object>> data, String filename) {
+        Log.exportInfo("Starting async CSV export of " + data.size() + " records to " + filename);
+        
         return java.util.concurrent.CompletableFuture.supplyAsync(() -> {
             try {
                 return exportToCSV(data, filename);
             } catch (Exception e) {
+                Log.exportError("Async CSV export failed: " + e.getMessage());
                 throw new RuntimeException(e);
             }
         });

@@ -9,6 +9,7 @@ import com.influxdata.demo.service.*;
 import com.influxdata.demo.ui.ConnectionDialog;
 import com.influxdata.demo.ui.QueryPanel;
 import com.influxdata.demo.ui.ResultsPanel;
+import com.influxdata.demo.util.Log;
 import javafx.application.Platform;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -65,6 +66,14 @@ public class MainApplicationController {
     
     public MainApplicationController(Stage mainStage) {
         this.mainStage = mainStage;
+        
+        // Initialize logging system
+        try {
+            Log.appInfo("Starting InfluxDB IDE v2.0.0 - Professional Edition");
+            Log.appInfo("Log directory: " + Log.getLogDirectory());
+        } catch (Exception e) {
+            System.err.println("Failed to initialize logging: " + e.getMessage());
+        }
         
         // Initialize services
         this.settingsService = new SettingsService();
@@ -278,24 +287,31 @@ public class MainApplicationController {
      */
     private void handleExecuteQuery() {
         if (isQueryRunning.get()) {
+            Log.queryInfo("Query execution skipped - already running");
             return; // Already running
         }
         
         String query = queryPanel.getQueryText().trim();
         if (query.isEmpty()) {
+            Log.queryWarning("Query execution attempted with empty query");
             showError("Please enter a query");
             return;
         }
         
         if (influxDBService == null) {
+            Log.queryError("Query execution attempted without database connection");
             showError("No database connection. Please configure connection first.");
             return;
         }
+        
+        Log.queryInfo("Starting query execution: " + query.substring(0, Math.min(query.length(), 100)) + (query.length() > 100 ? "..." : ""));
         
         // Start query execution
         isQueryRunning.set(true);
         queryPanel.setExecuting(true);
         resultsPanel.clearResults();
+        
+        long startTime = System.currentTimeMillis();
         
         // Execute query asynchronously
         CompletableFuture<String> queryFuture = influxDBService.executeQueryAsync(query);
@@ -303,8 +319,13 @@ public class MainApplicationController {
         queryFuture.thenAcceptAsync(result -> {
             Platform.runLater(() -> {
                 try {
+                    long executionTime = System.currentTimeMillis() - startTime;
+                    
                     // Process results
                     currentResults = dataProcessingService.parseInfluxDBResponse(result);
+                    
+                    // Log successful query execution
+                    Log.logQueryExecution(query, executionTime, currentResults.size());
                     
                     // Display results
                     resultsPanel.displayResults(currentResults);
@@ -316,6 +337,11 @@ public class MainApplicationController {
                     updateConnectionStatus("Query completed successfully", true);
                     
                 } catch (Exception e) {
+                    // Log query error
+                    long executionTime = System.currentTimeMillis() - startTime;
+                    Log.queryError("Query execution failed after " + executionTime + "ms: " + e.getMessage());
+                    Log.logException("query", "Query processing error", e);
+                    
                     // Handle error
                     queryPanel.setError(e.getMessage());
                     resultsPanel.displayJsonResults(result); // Show raw JSON even on error
@@ -326,6 +352,10 @@ public class MainApplicationController {
             });
         }).exceptionally(throwable -> {
             Platform.runLater(() -> {
+                long executionTime = System.currentTimeMillis() - startTime;
+                Log.queryError("Query execution failed after " + executionTime + "ms: " + throwable.getMessage());
+                Log.logException("query", "Query execution error", throwable);
+                
                 queryPanel.setError(throwable.getMessage());
                 updateConnectionStatus("Query failed: " + throwable.getMessage(), false);
                 isQueryRunning.set(false);
@@ -361,9 +391,13 @@ public class MainApplicationController {
      */
     private void handleExportResults() {
         if (currentResults == null || currentResults.isEmpty()) {
+            Log.exportWarning("Export attempted with no results");
             showError("No results to export");
             return;
         }
+        
+        Log.exportInfo("Starting export of " + currentResults.size() + " records to CSV");
+        long startTime = System.currentTimeMillis();
         
         try {
             // Show file chooser
@@ -376,23 +410,35 @@ public class MainApplicationController {
             
             File selectedFile = fileChooser.showSaveDialog(mainStage);
             if (selectedFile != null) {
+                Log.exportInfo("Export file selected: " + selectedFile.getAbsolutePath());
+                
                 // Export asynchronously
                 CompletableFuture<String> exportFuture = exportService.exportToCSVAsync(currentResults, selectedFile.getAbsolutePath());
                 
                 exportFuture.thenAcceptAsync(filePath -> {
                     Platform.runLater(() -> {
+                        long exportTime = System.currentTimeMillis() - startTime;
+                        Log.logExportOperation("CSV", currentResults.size(), exportTime, filePath);
                         showInfo("Export Successful", "Results exported to: " + filePath);
                         updateConnectionStatus("Export completed successfully", true);
                     });
                 }).exceptionally(throwable -> {
                     Platform.runLater(() -> {
+                        long exportTime = System.currentTimeMillis() - startTime;
+                        Log.exportError("Export failed after " + exportTime + "ms: " + throwable.getMessage());
+                        Log.logException("export", "Export operation failed", throwable);
                         showError("Export failed: " + throwable.getMessage());
                         updateConnectionStatus("Export failed", false);
                     });
                     return null;
                 });
+            } else {
+                Log.exportInfo("Export cancelled by user");
             }
         } catch (Exception e) {
+            long exportTime = System.currentTimeMillis() - startTime;
+            Log.exportError("Export failed after " + exportTime + "ms: " + e.getMessage());
+            Log.logException("export", "Export operation failed", e);
             showError("Export failed: " + e.getMessage());
         }
     }
@@ -442,13 +488,24 @@ public class MainApplicationController {
      * Handle window close
      */
     private void handleWindowClose(WindowEvent event) {
+        Log.appInfo("Application shutdown initiated by user");
+        
         // Save any pending changes
         try {
             if (currentConfig != null) {
                 settingsService.saveSettings(currentConfig);
+                Log.appInfo("Settings saved successfully on exit");
             }
         } catch (Exception e) {
-            System.err.println("Failed to save settings on exit: " + e.getMessage());
+            Log.appError("Failed to save settings on exit: " + e.getMessage());
+            Log.logException("application", "Settings save error on exit", e);
+        }
+        
+        // Shutdown logging service
+        try {
+            Log.shutdown();
+        } catch (Exception e) {
+            System.err.println("Failed to shutdown logging service: " + e.getMessage());
         }
         
         // Close application
@@ -460,6 +517,7 @@ public class MainApplicationController {
      * Show error dialog
      */
     private void showError(String message) {
+        Log.uiError("Error dialog shown: " + message);
         Alert alert = new Alert(Alert.AlertType.ERROR);
         alert.setTitle("Error");
         alert.setHeaderText(null);
@@ -471,6 +529,7 @@ public class MainApplicationController {
      * Show info dialog
      */
     private void showInfo(String title, String message) {
+        Log.uiInfo("Info dialog shown: " + title + " - " + message);
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         alert.setTitle(title);
         alert.setHeaderText(null);

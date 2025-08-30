@@ -1,6 +1,7 @@
 package com.influxdata.demo.service;
 
 import com.influxdata.demo.exception.ApplicationException;
+import com.influxdata.demo.util.Log;
 
 import java.time.Instant;
 import java.time.ZoneId;
@@ -91,12 +92,14 @@ public class TimezoneService {
             if (!"System Default (Local)".equals(selectedTimezone)) {
                 ZoneId zoneId = getSelectedTimezone(selectedTimezone);
                 TimeZone.setDefault(TimeZone.getTimeZone(zoneId));
-                System.out.println("JVM timezone set to: " + zoneId + 
+                Log.appInfo("JVM timezone set to: " + zoneId + 
                     " (" + zoneId.getDisplayName(java.time.format.TextStyle.FULL, java.util.Locale.getDefault()) + ")");
             } else {
-                System.out.println("Using system default timezone: " + ZoneId.systemDefault());
+                Log.appInfo("Using system default timezone: " + ZoneId.systemDefault());
             }
         } catch (Exception e) {
+            Log.appError("Failed to set JVM timezone to " + selectedTimezone + ": " + e.getMessage());
+            Log.logException("application", "Timezone setting error", e);
             throw new ApplicationException("Failed to set JVM timezone", e);
         }
     }

@@ -3,6 +3,7 @@ package com.influxdata.demo.service;
 import com.influxdata.demo.config.ApplicationConfig;
 import com.influxdata.demo.config.UIConstants;
 import com.influxdata.demo.exception.ApplicationException;
+import com.influxdata.demo.util.Log;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -24,23 +25,24 @@ public class SettingsService {
      * @return ApplicationConfig with loaded settings
      */
     public ApplicationConfig loadSettings() {
-        ApplicationConfig config = new ApplicationConfig();
-        
         try {
-            // Create settings directory if it doesn't exist
-            createSettingsDirectoryIfNeeded();
+            if (!settingsFileExists()) {
+                Log.appInfo("No settings file found, using default configuration");
+                return new ApplicationConfig();
+            }
             
-            // Load properties from file
+            Log.appInfo("Loading settings from: " + SETTINGS_FILE);
             Properties props = loadPropertiesFromFile();
-            
-            // Apply properties to config
+            ApplicationConfig config = new ApplicationConfig();
             applyPropertiesToConfig(props, config);
             
+            Log.appInfo("Settings loaded successfully");
+            return config;
         } catch (Exception e) {
+            Log.appError("Failed to load settings: " + e.getMessage());
+            Log.logException("application", "Settings load error", e);
             throw new ApplicationException("Failed to load settings", e);
         }
-        
-        return config;
     }
     
     /**
@@ -49,16 +51,14 @@ public class SettingsService {
      */
     public void saveSettings(ApplicationConfig config) {
         try {
-            // Create settings directory if it doesn't exist
+            Log.appInfo("Saving settings to: " + SETTINGS_FILE);
             createSettingsDirectoryIfNeeded();
-            
-            // Convert config to properties
             Properties props = convertConfigToProperties(config);
-            
-            // Save properties to file
             savePropertiesToFile(props);
-            
+            Log.appInfo("Settings saved successfully");
         } catch (Exception e) {
+            Log.appError("Failed to save settings: " + e.getMessage());
+            Log.logException("application", "Settings save error", e);
             throw new ApplicationException("Failed to save settings", e);
         }
     }
