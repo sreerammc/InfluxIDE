@@ -37,6 +37,9 @@ public class LoggingService {
     
     private LoggingService() throws ApplicationException {
         try {
+            // Create log directory first
+            createLogDirectory();
+            
             // Create loggers
             this.applicationLogger = createLogger(LoggingConfig.APPLICATION_LOGGER, LoggingConfig.DEFAULT_LOG_LEVEL);
             this.connectionLogger = createLogger(LoggingConfig.CONNECTION_LOGGER, LoggingConfig.DEFAULT_LOG_LEVEL);
@@ -165,6 +168,17 @@ public class LoggingService {
         }
     }
     
+    private static void createLogDirectory() {
+        File logDir = new File(LoggingConfig.LOG_DIR);
+        if (!logDir.exists()) {
+            if (logDir.mkdirs()) {
+                LOGGER.info("Log directory created: " + LoggingConfig.LOG_DIR);
+            } else {
+                LOGGER.warning("Failed to create log directory: " + LoggingConfig.LOG_DIR);
+            }
+        }
+    }
+
     // Public logging methods
     public void logApplication(Level level, String message) {
         applicationLogger.log(level, message);
