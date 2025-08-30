@@ -7,11 +7,11 @@
 
     <groupId>com.influxdata.demo</groupId>
     <artifactId>influx-simple</artifactId>
-    <version>1.0.0</version>
+    <version>2.0.0</version>
     <packaging>jar</packaging>
 
-    <name>InfluxDB Simple Demo</name>
-    <description>A simple Java application to query InfluxDB tables</description>
+    <name>InfluxDB IDE - Professional Edition</name>
+    <description>A professional, enterprise-grade InfluxDB IDE with modern architecture</description>
 
     <properties>
         <maven.compiler.source>11</maven.compiler.source>
@@ -77,7 +77,7 @@
                         <configuration>
                             <transformers>
                                 <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
-                                    <mainClass>com.influxdata.demo.InfluxDBJavaFXIDE</mainClass>
+                                    <mainClass>com.influxdata.demo.InfluxDBIDERefactored</mainClass>
                                     <manifestEntries>
                                         <Add-Opens>javafx.graphics/javafx.scene=ALL-UNNAMED</Add-Opens>
                                         <Add-Opens>java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED</Add-Opens>
@@ -107,7 +107,7 @@
                 <artifactId>exec-maven-plugin</artifactId>
                 <version>3.1.0</version>
                 <configuration>
-                    <mainClass>com.influxdata.demo.InfluxDBJavaFXIDE</mainClass>
+                    <mainClass>com.influxdata.demo.InfluxDBIDERefactored</mainClass>
                     <options>
                         <option>--add-opens</option>
                         <option>javafx.graphics/javafx.scene=ALL-UNNAMED</option>
@@ -127,7 +127,7 @@
                     <appVersion>${project.version}</appVersion>
                     <vendor>InfluxDB IDE</vendor>
                     <destination>target/installer</destination>
-                    <module>influx.simple/com.influxdata.demo.InfluxDBJavaFXIDE</module>
+                    <module>influx.simple/com.influxdata.demo.InfluxDBIDERefactored</module>
                     <runtimeImage>target/image</runtimeImage>
                     <javaOptions>
                         <option>--add-opens</option>
@@ -147,7 +147,7 @@
                 <artifactId>javafx-maven-plugin</artifactId>
                 <version>0.0.8</version>
                 <configuration>
-                    <mainClass>com.influxdata.demo.InfluxDBJavaFXIDE</mainClass>
+                    <mainClass>com.influxdata.demo.InfluxDBIDERefactored</mainClass>
                     <options>
                         <option>--add-opens</option>
                         <option>javafx.graphics/javafx.scene=ALL-UNNAMED</option>

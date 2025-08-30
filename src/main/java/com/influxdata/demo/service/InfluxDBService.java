@@ -1,0 +1,386 @@
+package com.influxdata.demo.service;
+
+import com.influxdata.demo.config.ApplicationConfig;
+import com.influxdata.demo.exception.ConnectionException;
+import com.influxdata.demo.exception.QueryExecutionException;
+import com.influxdata.demo.model.ApiType;
+import com.influxdata.demo.model.Protocol;
+import com.influxdata.demo.model.QueryTimeout;
+
+import java.io.BufferedReader;
+import java.io.InputStreamReader;
+import java.net.HttpURLConnection;
+import java.net.URL;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
+import java.sql.*;
+import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.Executors;
+import java.util.concurrent.TimeUnit;
+
+/**
+ * Service for InfluxDB operations
+ * Handles connection testing, query execution, and data retrieval
+ */
+public class InfluxDBService {
+    
+    private final ApplicationConfig config;
+    private final TimezoneService timezoneService;
+    
+    public InfluxDBService(ApplicationConfig config) {
+        this.config = config;
+        this.timezoneService = new TimezoneService();
+    }
+    
+    /**
+     * Test connection to InfluxDB
+     * @return true if connection successful
+     * @throws ConnectionException if connection fails
+     */
+    public boolean testConnection() throws ConnectionException {
+        try {
+            switch (config.getApiType()) {
+                case FLIGHT_SQL:
+                    return testFlightSQLConnection();
+                case INFLUXDB_3_API:
+                    return testInfluxDB3Connection();
+                case REST_API:
+                    return testRESTConnection();
+                default:
+                    throw new ConnectionException("Unknown API type: " + config.getApiType());
+            }
+        } catch (Exception e) {
+            throw new ConnectionException("Connection test failed", e);
+        }
+    }
+    
+    /**
+     * Execute query against InfluxDB
+     * @param query The query to execute
+     * @return Query results as JSON string
+     * @throws QueryExecutionException if query execution fails
+     */
+    public String executeQuery(String query) throws QueryExecutionException {
+        try {
+            switch (config.getApiType()) {
+                case FLIGHT_SQL:
+                    return executeFlightSQLQuery(query);
+                case INFLUXDB_3_API:
+                    return executeInfluxDB3Query(query);
+                case REST_API:
+                    return executeRESTQuery(query);
+                default:
+                    throw new QueryExecutionException("Unknown API type: " + config.getApiType());
+            }
+        } catch (Exception e) {
+            throw new QueryExecutionException("Query execution failed", e);
+        }
+    }
+    
+    /**
+     * Execute query asynchronously
+     * @param query The query to execute
+     * @return CompletableFuture with query results
+     */
+    public CompletableFuture<String> executeQueryAsync(String query) {
+        return CompletableFuture.supplyAsync(() -> {
+            try {
+                return executeQuery(query);
+            } catch (Exception e) {
+                throw new RuntimeException(e);
+            }
+        });
+    }
+    
+    /**
+     * Test Flight SQL connection
+     */
+    private boolean testFlightSQLConnection() throws Exception {
+        String testQuery = "SHOW TABLES";
+        
+        try {
+            String result = executeFlightSQLQuery(testQuery);
+            return result != null && !result.contains("error");
+        } catch (Exception e) {
+            // Try fallback to REST API
+            System.out.println("Flight SQL connection failed, trying REST API fallback: " + e.getMessage());
+            return testRESTConnection();
+        }
+    }
+    
+    /**
+     * Test InfluxDB 3 Java API connection
+     */
+    private boolean testInfluxDB3Connection() throws Exception {
+        String testQuery = "SHOW TABLES";
+        
+        try {
+            String result = executeInfluxDB3Query(testQuery);
+            return result != null && !result.contains("error");
+        } catch (Exception e) {
+            // Try fallback to REST API
+            System.out.println("InfluxDB 3 API connection failed, trying REST API fallback: " + e.getMessage());
+            return testRESTConnection();
+        }
+    }
+    
+    /**
+     * Test REST API connection
+     */
+    private boolean testRESTConnection() throws Exception {
+        String testQuery = "SHOW MEASUREMENTS";
+        String result = executeRESTQuery(testQuery);
+        return result != null && !result.contains("error");
+    }
+    
+    /**
+     * Execute Flight SQL query
+     */
+    private String executeFlightSQLQuery(String query) throws Exception {
+        // Try multiple Flight SQL endpoints
+        String[] endpoints = {"/flight", "/arrow-flight", ""};
+        
+        for (String endpoint : endpoints) {
+            try {
+                return executeFlightSQLQueryWithEndpoint(query, endpoint);
+            } catch (Exception e) {
+                System.out.println("Flight SQL endpoint " + endpoint + " failed: " + e.getMessage());
+                if (endpoint.equals("")) {
+                    // Last endpoint failed, throw exception
+                    throw e;
+                }
+            }
+        }
+        
+        throw new QueryExecutionException("All Flight SQL endpoints failed");
+    }
+    
+    /**
+     * Execute Flight SQL query with specific endpoint
+     */
+    private String executeFlightSQLQueryWithEndpoint(String query, String endpoint) throws Exception {
+        // Translate query if needed
+        String translatedQuery = translateQueryForFlightSQL(query);
+        
+        // Build JDBC URL
+        String jdbcUrl = buildFlightSQLJDBCUrl(endpoint);
+        
+        try (Connection connection = DriverManager.getConnection(jdbcUrl, config.getToken(), "")) {
+            connection.setNetworkTimeout(Executors.newSingleThreadExecutor(), config.getQueryTimeout().getMilliseconds());
+            
+            try (Statement statement = connection.createStatement()) {
+                statement.setQueryTimeout((int) TimeUnit.MILLISECONDS.toSeconds(config.getQueryTimeout().getMilliseconds()));
+                
+                try (ResultSet resultSet = statement.executeQuery(translatedQuery)) {
+                    return convertResultSetToJSON(resultSet);
+                }
+            }
+        }
+    }
+    
+    /**
+     * Execute InfluxDB 3 Java API query
+     */
+    private String executeInfluxDB3Query(String query) throws Exception {
+        // For now, fallback to REST API
+        // TODO: Implement actual InfluxDB 3 Java API client
+        return executeRESTQuery(query);
+    }
+    
+    /**
+     * Execute REST API query
+     */
+    private String executeRESTQuery(String query) throws Exception {
+        String urlString = buildRESTUrl(query);
+        URL url = new URL(urlString);
+        
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setRequestMethod("GET");
+        connection.setRequestProperty("Authorization", "Token " + config.getToken());
+        connection.setRequestProperty("Accept", "application/json");
+        connection.setConnectTimeout(30000);
+        connection.setReadTimeout(config.getQueryTimeout().getMilliseconds());
+        
+        if (config.isSkipSSLValidation() && config.getProtocol() == Protocol.HTTPS) {
+            // TODO: Implement SSL validation skipping
+        }
+        
+        int responseCode = connection.getResponseCode();
+        if (responseCode != 200) {
+            throw new QueryExecutionException("HTTP error: " + responseCode + " - " + connection.getResponseMessage());
+        }
+        
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+            StringBuilder response = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                response.append(line);
+            }
+            return response.toString();
+        }
+    }
+    
+    /**
+     * Build Flight SQL JDBC URL
+     */
+    private String buildFlightSQLJDBCUrl(String endpoint) {
+        StringBuilder url = new StringBuilder("jdbc:arrow-flight://");
+        
+        if (config.getProtocol() == Protocol.HTTPS) {
+            url.append("https://");
+        } else {
+            url.append("http://");
+        }
+        
+        url.append(config.getHost());
+        
+        if (!endpoint.isEmpty()) {
+            url.append(endpoint);
+        }
+        
+        url.append("?useEncryption=").append(config.getProtocol() == Protocol.HTTPS);
+        
+        return url.toString();
+    }
+    
+    /**
+     * Build REST API URL
+     */
+    private String buildRESTUrl(String query) throws Exception {
+        StringBuilder url = new StringBuilder();
+        url.append(config.getProtocol().getValue()).append("://");
+        url.append(config.getHost()).append("/query");
+        
+        String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8.toString());
+        String encodedToken = URLEncoder.encode(config.getToken(), StandardCharsets.UTF_8.toString());
+        String encodedDatabase = URLEncoder.encode(config.getDatabase(), StandardCharsets.UTF_8.toString());
+        
+        url.append("?p=").append(encodedToken);
+        url.append("&db=").append(encodedDatabase);
+        url.append("&q=").append(encodedQuery);
+        
+        return url.toString();
+    }
+    
+    /**
+     * Translate query for Flight SQL compatibility
+     */
+    private String translateQueryForFlightSQL(String query) {
+        if (query == null) return "";
+        
+        String upperQuery = query.toUpperCase();
+        
+        // Translate SHOW MEASUREMENTS to SHOW TABLES
+        if (upperQuery.contains("SHOW MEASUREMENTS")) {
+            query = query.replaceAll("(?i)SHOW MEASUREMENTS", "SHOW TABLES");
+        }
+        
+        // Translate SHOW DATABASES to SHOW SCHEMAS
+        if (upperQuery.contains("SHOW DATABASES")) {
+            query = query.replaceAll("(?i)SHOW DATABASES", "SHOW SCHEMAS");
+        }
+        
+        return query;
+    }
+    
+    /**
+     * Convert ResultSet to JSON string
+     */
+    private String convertResultSetToJSON(ResultSet resultSet) throws Exception {
+        ResultSetMetaData metaData = resultSet.getMetaData();
+        int columnCount = metaData.getColumnCount();
+        
+        List<Map<String, Object>> results = new ArrayList<>();
+        
+        while (resultSet.next()) {
+            Map<String, Object> row = new HashMap<>();
+            
+            for (int i = 1; i <= columnCount; i++) {
+                String columnName = metaData.getColumnName(i);
+                Object value = resultSet.getObject(i);
+                
+                // Handle timestamp conversion
+                if (timezoneService.isTimestampColumn(columnName) && config.isTimezoneConversion()) {
+                    if (value instanceof Timestamp) {
+                        value = timezoneService.convertToTimezone((Timestamp) value, 
+                            timezoneService.getSelectedTimezone(config.getSelectedTimezone()));
+                    }
+                }
+                
+                row.put(columnName, value);
+            }
+            
+            results.add(row);
+        }
+        
+        // Convert to JSON format
+        return convertToJSONFormat(results);
+    }
+    
+    /**
+     * Convert results to JSON format
+     */
+    private String convertToJSONFormat(List<Map<String, Object>> results) {
+        StringBuilder json = new StringBuilder();
+        json.append("{\"results\":[{\"statement_id\":0,\"series\":[{\"name\":\"result\",\"columns\":[");
+        
+        if (!results.isEmpty()) {
+            Map<String, Object> firstRow = results.get(0);
+            String[] columns = firstRow.keySet().toArray(new String[0]);
+            
+            // Add column names
+            for (int i = 0; i < columns.length; i++) {
+                if (i > 0) json.append(",");
+                json.append("\"").append(escapeJsonString(columns[i])).append("\"");
+            }
+            
+            json.append("],\"values\":[");
+            
+            // Add data rows
+            for (int i = 0; i < results.size(); i++) {
+                if (i > 0) json.append(",");
+                json.append("[");
+                
+                Map<String, Object> row = results.get(i);
+                for (int j = 0; j < columns.length; j++) {
+                    if (j > 0) json.append(",");
+                    Object value = row.get(columns[j]);
+                    json.append("\"").append(escapeJsonString(value != null ? value.toString() : "")).append("\"");
+                }
+                
+                json.append("]");
+            }
+            
+            json.append("]}]}]}");
+        } else {
+            json.append("],\"values\":[]}]}]}");
+        }
+        
+        return json.toString();
+    }
+    
+    /**
+     * Escape JSON string
+     */
+    private String escapeJsonString(String input) {
+        if (input == null) return "";
+        
+        return input.replace("\\", "\\\\")
+                   .replace("\"", "\\\"")
+                   .replace("\n", "\\n")
+                   .replace("\r", "\\r")
+                   .replace("\t", "\\t");
+    }
+    
+    /**
+     * Get current configuration
+     */
+    public ApplicationConfig getConfig() {
+        return config;
+    }
+} 

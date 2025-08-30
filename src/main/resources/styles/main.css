@@ -1,0 +1,361 @@
+/* Main Application Styles for InfluxDB IDE */
+
+/* Root styles */
+.root {
+    -fx-font-family: "Arial", sans-serif;
+    -fx-font-size: 12px;
+    -fx-background-color: #f5f5f5;
+}
+
+/* Button styles */
+.button {
+    -fx-background-radius: 5px;
+    -fx-border-radius: 5px;
+    -fx-padding: 8px 16px;
+    -fx-font-weight: bold;
+    -fx-cursor: hand;
+}
+
+.button:hover {
+    -fx-opacity: 0.8;
+}
+
+.button:pressed {
+    -fx-opacity: 0.6;
+}
+
+.button:disabled {
+    -fx-opacity: 0.4;
+    -fx-cursor: default;
+}
+
+/* Primary button */
+.button.primary {
+    -fx-background-color: #2196F3;
+    -fx-text-fill: white;
+}
+
+/* Success button */
+.button.success {
+    -fx-background-color: #4CAF50;
+    -fx-text-fill: white;
+}
+
+/* Secondary button */
+.button.secondary {
+    -fx-background-color: #6c757d;
+    -fx-text-fill: white;
+}
+
+/* Text area styles */
+.text-area {
+    -fx-background-color: white;
+    -fx-border-color: #cccccc;
+    -fx-border-radius: 5px;
+    -fx-background-radius: 5px;
+    -fx-padding: 8px;
+}
+
+.text-area:focused {
+    -fx-border-color: #2196F3;
+    -fx-border-width: 2px;
+}
+
+/* Table view styles */
+.table-view {
+    -fx-background-color: white;
+    -fx-border-color: #cccccc;
+    -fx-border-radius: 5px;
+    -fx-background-radius: 5px;
+}
+
+.table-view .column-header {
+    -fx-background-color: #f8f9fa;
+    -fx-border-color: #dee2e6;
+    -fx-font-weight: bold;
+}
+
+.table-view .table-row-cell {
+    -fx-border-color: #dee2e6;
+}
+
+.table-view .table-row-cell:odd {
+    -fx-background-color: #f8f9fa;
+}
+
+.table-view .table-row-cell:even {
+    -fx-background-color: white;
+}
+
+.table-view .table-row-cell:selected {
+    -fx-background-color: #e3f2fd;
+}
+
+/* Tab pane styles */
+.tab-pane {
+    -fx-background-color: white;
+    -fx-border-color: #cccccc;
+    -fx-border-radius: 5px;
+    -fx-background-radius: 5px;
+}
+
+.tab-pane .tab-header-area {
+    -fx-background-color: #f8f9fa;
+    -fx-border-color: #dee2e6;
+}
+
+.tab-pane .tab-header-background {
+    -fx-background-color: #f8f9fa;
+}
+
+.tab-pane .tab {
+    -fx-background-color: #e9ecef;
+    -fx-border-color: #dee2e6;
+    -fx-padding: 8px 16px;
+}
+
+.tab-pane .tab:selected {
+    -fx-background-color: white;
+    -fx-border-bottom-color: white;
+}
+
+/* Checkbox styles */
+.check-box {
+    -fx-font-weight: bold;
+}
+
+.check-box .box {
+    -fx-background-color: white;
+    -fx-border-color: #cccccc;
+    -fx-border-radius: 3px;
+    -fx-background-radius: 3px;
+}
+
+.check-box:selected .mark {
+    -fx-background-color: #2196F3;
+}
+
+/* Label styles */
+.label {
+    -fx-text-fill: #333333;
+}
+
+.label.title {
+    -fx-font-size: 18px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #00008B;
+}
+
+.label.status {
+    -fx-font-weight: bold;
+}
+
+.label.status.success {
+    -fx-text-fill: #4CAF50;
+}
+
+.label.status.error {
+    -fx-text-fill: #F44336;
+}
+
+.label.status.warning {
+    -fx-text-fill: #FF9800;
+}
+
+.label.status.info {
+    -fx-text-fill: #2196F3;
+}
+
+/* Progress indicator styles */
+.progress-indicator {
+    -fx-progress-color: #2196F3;
+}
+
+/* Combo box styles */
+.combo-box {
+    -fx-background-color: white;
+    -fx-border-color: #cccccc;
+    -fx-border-radius: 5px;
+    -fx-background-radius: 5px;
+    -fx-padding: 5px;
+}
+
+.combo-box:focused {
+    -fx-border-color: #2196F3;
+    -fx-border-width: 2px;
+}
+
+.combo-box .list-cell {
+    -fx-padding: 5px;
+}
+
+/* Text field styles */
+.text-field {
+    -fx-background-color: white;
+    -fx-border-color: #cccccc;
+    -fx-border-radius: 5px;
+    -fx-background-radius: 5px;
+    -fx-padding: 8px;
+}
+
+.text-field:focused {
+    -fx-border-color: #2196F3;
+    -fx-border-width: 2px;
+}
+
+/* Password field styles */
+.password-field {
+    -fx-background-color: white;
+    -fx-border-color: #cccccc;
+    -fx-border-radius: 5px;
+    -fx-background-radius: 5px;
+    -fx-padding: 8px;
+}
+
+.password-field:focused {
+    -fx-border-color: #2196F3;
+    -fx-border-width: 2px;
+}
+
+/* VBox and HBox styles */
+.vbox, .hbox {
+    -fx-spacing: 10px;
+}
+
+/* Form container styles */
+.form-container {
+    -fx-background-color: white;
+    -fx-border-color: #cccccc;
+    -fx-border-radius: 5px;
+    -fx-background-radius: 5px;
+    -fx-padding: 20px;
+}
+
+/* Header section styles */
+.header-section {
+    -fx-background-color: #f8f9fa;
+    -fx-border-color: #dee2e6;
+    -fx-border-radius: 5px;
+    -fx-background-radius: 5px;
+    -fx-padding: 15px;
+}
+
+/* Query section styles */
+.query-section {
+    -fx-background-color: white;
+    -fx-border-color: #dee2e6;
+    -fx-border-radius: 5px;
+    -fx-background-radius: 5px;
+    -fx-padding: 15px;
+}
+
+/* Results section styles */
+.results-section {
+    -fx-background-color: white;
+    -fx-border-color: #dee2e6;
+    -fx-border-radius: 5px;
+    -fx-background-radius: 5px;
+    -fx-padding: 15px;
+}
+
+/* Status section styles */
+.status-section {
+    -fx-background-color: #f8f9fa;
+    -fx-border-color: #dee2e6;
+    -fx-border-radius: 5px;
+    -fx-background-radius: 5px;
+    -fx-padding: 10px;
+}
+
+/* Tooltip styles */
+.tooltip {
+    -fx-background-color: #333333;
+    -fx-text-fill: white;
+    -fx-border-color: #666666;
+    -fx-border-radius: 3px;
+    -fx-background-radius: 3px;
+    -fx-padding: 5px;
+}
+
+/* Alert dialog styles */
+.dialog-pane {
+    -fx-background-color: white;
+    -fx-border-color: #cccccc;
+    -fx-border-radius: 5px;
+    -fx-background-radius: 5px;
+}
+
+.dialog-pane .header-panel {
+    -fx-background-color: #f8f9fa;
+    -fx-border-color: #dee2e6;
+}
+
+.dialog-pane .content {
+    -fx-padding: 20px;
+}
+
+.dialog-pane .button-bar {
+    -fx-background-color: #f8f9fa;
+    -fx-border-color: #dee2e6;
+    -fx-padding: 10px;
+}
+
+/* Scroll bar styles */
+.scroll-bar {
+    -fx-background-color: #f0f0f0;
+}
+
+.scroll-bar .thumb {
+    -fx-background-color: #c0c0c0;
+    -fx-background-radius: 5px;
+}
+
+.scroll-bar .thumb:hover {
+    -fx-background-color: #a0a0a0;
+}
+
+.scroll-bar .track {
+    -fx-background-color: #f0f0f0;
+}
+
+/* Focus styles */
+.focused {
+    -fx-border-color: #2196F3;
+    -fx-border-width: 2px;
+}
+
+/* Hover effects */
+.hoverable:hover {
+    -fx-opacity: 0.8;
+    -fx-cursor: hand;
+}
+
+/* Disabled state styles */
+.disabled {
+    -fx-opacity: 0.4;
+    -fx-cursor: default;
+}
+
+/* Success state styles */
+.success {
+    -fx-text-fill: #4CAF50;
+    -fx-font-weight: bold;
+}
+
+/* Error state styles */
+.error {
+    -fx-text-fill: #F44336;
+    -fx-font-weight: bold;
+}
+
+/* Warning state styles */
+.warning {
+    -fx-text-fill: #FF9800;
+    -fx-font-weight: bold;
+}
+
+/* Info state styles */
+.info {
+    -fx-text-fill: #2196F3;
+    -fx-font-weight: bold;
+} 
