@@ -372,6 +372,9 @@ public class MainApplicationController {
                     queryPanel.setQueryCompleted(!currentResults.isEmpty());
                     updateRecordCount(currentResults.size());
                     
+                    // Update connection status to show success
+                    updateConnectionStatus("Query completed successfully", true);
+                    
                 } catch (Exception e) {
                     // Log query error
                     long executionTime = System.currentTimeMillis() - startTime;
