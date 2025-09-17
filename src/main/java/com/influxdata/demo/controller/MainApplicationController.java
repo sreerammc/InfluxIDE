@@ -16,6 +16,7 @@ import javafx.scene.layout.*;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
 import javafx.scene.text.TextAlignment;
+import javafx.scene.image.Image;
 import javafx.stage.FileChooser;
 import javafx.stage.Stage;
 import javafx.stage.WindowEvent;
@@ -502,7 +503,7 @@ public class MainApplicationController {
      */
     private void setApplicationIcon() {
         try {
-            // TODO: Set application icon when available
+            mainStage.getIcons().add(new Image(getClass().getResourceAsStream("/icons/app_icon.png")));
         } catch (Exception e) {
             System.err.println("Failed to set application icon: " + e.getMessage());
         }
