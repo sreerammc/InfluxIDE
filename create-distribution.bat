@@ -4,7 +4,7 @@ echo.
 
 REM Set variables
 set "PROJECT_NAME=InfluxDB-IDE"
-set "VERSION=1.0.0"
+set "VERSION=2.0.0-Beta"
 set "DIST_DIR=%PROJECT_NAME%-v%VERSION%"
 set "ZIP_FILE=%PROJECT_NAME%-v%VERSION%-Standalone.zip"
 

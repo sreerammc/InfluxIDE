@@ -54,11 +54,9 @@ public class MainApplicationController {
     private final AtomicBoolean isQueryRunning = new AtomicBoolean(false);
     
     // UI Elements
-    private CheckBox queryToggleCheckBox;
     private VBox querySection;
     private VBox resultsSection;
     private Label connectionStatusLabel;
-    private Label querySectionStatusLabel;
     
     public MainApplicationController(Stage mainStage, ApplicationConfig connectionConfig) {
         this.mainStage = mainStage;
@@ -175,15 +173,10 @@ public class MainApplicationController {
         titleLabel.setTextFill(javafx.scene.paint.Color.web(UIConstants.TITLE_COLOR));
         titleLabel.setTextAlignment(TextAlignment.CENTER);
         
-        // Query toggle checkbox
-        queryToggleCheckBox = new CheckBox("Show Query Section");
-        queryToggleCheckBox.setSelected(true);
-        queryToggleCheckBox.setTooltip(new Tooltip("Toggle visibility of the query input section"));
-        
         // Header layout
         HBox headerLayout = new HBox(UIConstants.DEFAULT_SPACING);
         headerLayout.setAlignment(Pos.CENTER);
-        headerLayout.getChildren().addAll(titleLabel, queryToggleCheckBox);
+        headerLayout.getChildren().add(titleLabel);
         
         headerBox.getChildren().add(headerLayout);
         return headerBox;
@@ -261,15 +254,11 @@ public class MainApplicationController {
         toggleMaximizeItem.setOnAction(e -> toggleMaximize());
         toggleMaximizeItem.setStyle("-fx-padding: 5 10 5 10;");
         
-        MenuItem toggleQuerySectionItem = new MenuItem("Toggle Query Section");
-        toggleQuerySectionItem.setOnAction(e -> toggleQuerySection());
-        toggleQuerySectionItem.setStyle("-fx-padding: 5 10 5 10;");
-        
         MenuItem clearResultsItem = new MenuItem("Clear Results");
         clearResultsItem.setOnAction(e -> handleClearResults());
         clearResultsItem.setStyle("-fx-padding: 5 10 5 10;");
         
-        viewMenu.getItems().addAll(toggleMaximizeItem, toggleQuerySectionItem, clearResultsItem);
+        viewMenu.getItems().addAll(toggleMaximizeItem, clearResultsItem);
         
         // Tools Menu
         Menu toolsMenu = new Menu("Tools");
@@ -314,19 +303,10 @@ public class MainApplicationController {
         
         // Connection status (left)
         connectionStatusLabel = new Label("Ready");
-        connectionStatusLabel.setFont(Font.font(UIConstants.DEFAULT_FONT_FAMILY, FontWeight.BOLD, UIConstants.DEFAULT_FONT_SIZE));
+        connectionStatusLabel.setFont(Font.font(UIConstants.DEFAULT_FONT_FAMILY, FontWeight.NORMAL, UIConstants.SMALL_FONT_SIZE));
         connectionStatusLabel.setTextFill(javafx.scene.paint.Color.web(UIConstants.SUCCESS_COLOR));
         
-        // Spacer
-        Region spacer = new Region();
-        HBox.setHgrow(spacer, Priority.ALWAYS);
-        
-        // Query section status (right)
-        querySectionStatusLabel = new Label("Query section visible");
-        querySectionStatusLabel.setFont(Font.font(UIConstants.DEFAULT_FONT_FAMILY, FontWeight.BOLD, UIConstants.DEFAULT_FONT_SIZE));
-        querySectionStatusLabel.setTextFill(javafx.scene.paint.Color.web(UIConstants.SECONDARY_COLOR));
-        
-        statusBox.getChildren().addAll(connectionStatusLabel, spacer, querySectionStatusLabel);
+        statusBox.getChildren().add(connectionStatusLabel);
         return statusBox;
     }
     
@@ -334,9 +314,6 @@ public class MainApplicationController {
      * Setup event handlers
      */
     private void setupEventHandlers() {
-        // Query toggle checkbox
-        queryToggleCheckBox.setOnAction(e -> toggleQuerySectionWithCheckBox());
-        
         // Window close event
         mainStage.setOnCloseRequest(this::handleWindowClose);
     }
@@ -404,7 +381,7 @@ public class MainApplicationController {
                     // Handle error
                     queryPanel.setError(e.getMessage());
                     resultsPanel.displayJsonResults(result); // Show raw JSON even on error
-                    updateConnectionStatus("Query failed: " + e.getMessage(), false);
+                    updateConnectionStatus("Query failed", false);
                 } finally {
                     isQueryRunning.set(false);
                 }
@@ -416,7 +393,7 @@ public class MainApplicationController {
                 Log.logException("query", "Query execution error", throwable);
                 
                 queryPanel.setError(throwable.getMessage());
-                updateConnectionStatus("Query failed: " + throwable.getMessage(), false);
+                updateConnectionStatus("Query failed", false);
                 isQueryRunning.set(false);
             });
             return null;
@@ -430,7 +407,7 @@ public class MainApplicationController {
         if (isQueryRunning.get()) {
             isQueryRunning.set(false);
             queryPanel.setExecuting(false);
-            updateConnectionStatus("Query stopped by user", false);
+            updateConnectionStatus("Query stopped", false);
         }
     }
     
@@ -479,7 +456,7 @@ public class MainApplicationController {
                         long exportTime = System.currentTimeMillis() - startTime;
                         Log.logExportOperation("CSV", currentResults.size(), exportTime, filePath);
                         showInfo("Export Successful", "Results exported to: " + filePath);
-                        updateConnectionStatus("Export completed successfully", true);
+                        updateConnectionStatus("Export completed", true);
                     });
                 }).exceptionally(throwable -> {
                     Platform.runLater(() -> {
@@ -590,7 +567,7 @@ public class MainApplicationController {
         try {
             if (currentConfig != null && currentConfig.isValid()) {
                 influxDBService = new InfluxDBService(currentConfig);
-                updateConnectionStatus("Connection refreshed successfully", true);
+                updateConnectionStatus("Connection refreshed", true);
                 showInfo("Connection Refreshed", "Database connection has been refreshed successfully.");
             } else {
                 showError("No valid connection configuration found. Please reconnect.");
@@ -616,16 +593,6 @@ public class MainApplicationController {
         }
     }
     
-    /**
-     * Toggle query section visibility
-     */
-    private void toggleQuerySection() {
-        Log.appInfo("Toggle query section menu item clicked");
-        if (queryToggleCheckBox != null) {
-            queryToggleCheckBox.setSelected(!queryToggleCheckBox.isSelected());
-            toggleQuerySectionWithCheckBox();
-        }
-    }
     
     /**
      * Handle clear results menu item
@@ -737,22 +704,6 @@ public class MainApplicationController {
         alert.showAndWait();
     }
     
-    /**
-     * Toggle query section with checkbox
-     */
-    private void toggleQuerySectionWithCheckBox() {
-        if (queryToggleCheckBox != null && querySection != null) {
-            boolean isVisible = queryToggleCheckBox.isSelected();
-            querySection.setVisible(isVisible);
-            querySection.setManaged(isVisible);
-            
-            if (isVisible) {
-                Log.appInfo("Query section shown");
-            } else {
-                Log.appInfo("Query section hidden");
-            }
-        }
-    }
     
     /**
      * Show info dialog
@@ -792,9 +743,9 @@ public class MainApplicationController {
      */
     private void updateConnectionStatusOnStartup() {
         if (influxDBService != null && currentConfig != null) {
-            updateConnectionStatus("Connected to " + currentConfig.getHost(), true);
+            updateConnectionStatus("Connected", true);
         } else {
-            updateConnectionStatus("No database connection", false);
+            updateConnectionStatus("Not connected", false);
         }
     }
     

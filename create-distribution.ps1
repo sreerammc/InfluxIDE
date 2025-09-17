@@ -6,7 +6,7 @@ Write-Host ""
 
 # Set variables
 $PROJECT_NAME = "InfluxDB-IDE"
-$VERSION = "1.0.0"
+$VERSION = "2.0.0-Beta"
 $DIST_DIR = "$PROJECT_NAME-v$VERSION"
 $ZIP_FILE = "$PROJECT_NAME-v$VERSION-Standalone.zip"
 
@@ -38,8 +38,7 @@ Write-Host "Creating distribution directory..." -ForegroundColor Cyan
 New-Item -ItemType Directory -Path $DIST_DIR | Out-Null
 
 Write-Host "Copying application files..." -ForegroundColor Cyan
-Copy-Item "target\influx-simple-1.0.0.jar" -Destination "$DIST_DIR\" -Force
-Copy-Item "InfluxDB-IDE-Standalone\InfluxDB-IDE.bat" -Destination "$DIST_DIR\" -Force
+Copy-Item "target\influx-simple-2.0.0.jar" -Destination "$DIST_DIR\" -Force
 
 Write-Host "Copying JavaFX SDK..." -ForegroundColor Cyan
 Copy-Item "javafx-sdk" -Destination "$DIST_DIR\" -Recurse -Force
@@ -49,6 +48,61 @@ Copy-Item "README.md" -Destination "$DIST_DIR\" -Force
 Copy-Item "LICENSE" -Destination "$DIST_DIR\" -Force
 
 Write-Host "Creating launcher scripts..." -ForegroundColor Cyan
+
+# Main launcher script
+@"
+@echo off
+title InfluxDB Query IDE v2.0.0 Beta - Launcher
+echo ========================================
+echo InfluxDB Query IDE v2.0.0 Beta - Launcher
+echo ========================================
+echo.
+
+echo Checking Java installation...
+java -version >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ERROR: Java is not installed or not in PATH
+    echo Please install Java 11 or higher from https://adoptium.net/
+    pause
+    exit /b 1
+)
+echo Java is available
+echo.
+
+echo Checking if JAR exists...
+if not exist "influx-simple-2.0.0.jar" (
+    echo ERROR: JAR file not found: influx-simple-2.0.0.jar
+    pause
+    exit /b 1
+)
+echo JAR file found
+echo.
+
+echo Looking for JavaFX runtime...
+if exist "javafx-sdk\bin\javafx.graphics.dll" (
+    echo Found local JavaFX SDK
+    set JAVAFX_PATH=%~dp0javafx-sdk\lib
+    echo Using local JavaFX SDK directory
+) else (
+    echo WARNING: JavaFX SDK not found locally
+    echo Make sure JavaFX is installed or in PATH
+    set JAVAFX_PATH=
+)
+echo.
+
+echo Starting InfluxDB IDE with JavaFX...
+if defined JAVAFX_PATH (
+    java --module-path "%JAVAFX_PATH%" --add-modules javafx.controls,javafx.fxml,javafx.web -jar influx-simple-2.0.0.jar
+) else (
+    java -jar influx-simple-2.0.0.jar
+)
+
+if %errorlevel% neq 0 (
+    echo.
+    echo Application exited with error code: %errorlevel%
+    pause
+)
+"@ | Out-File -FilePath "$DIST_DIR\InfluxDB-IDE.bat" -Encoding ASCII
 
 # Simple launcher
 @"
@@ -90,20 +144,25 @@ Write-Host "Creating README for distribution..." -ForegroundColor Cyan
 - `InfluxDB-IDE.bat` - Main launcher script
 - `Run-IDE.bat` - Simple launcher (recommended)
 - `Run-IDE-Admin.bat` - Launcher with admin privileges
-- `influx-simple-1.0.0.jar` - Application JAR file
+- `influx-simple-2.0.0.jar` - Application JAR file
 - `javafx-sdk/` - JavaFX runtime (included)
 - `README.md` - Full documentation
 - `LICENSE` - MIT License
 
 ## Features
 
-- **InfluxDB Query IDE** with modern JavaFX interface
-- **Connection Management** for multiple databases
-- **SQL Query Editor** with syntax highlighting
-- **Results Display** in table format with filtering and sorting
-- **CSV Export** functionality
-- **Drag & Drop** support for table names
-- **Excel-like Features** including column filtering and sorting
+- **InfluxDB Query IDE v2.0.0 Beta** with modern JavaFX interface
+- **Connection Management** for multiple databases with startup configuration
+- **SQL Query Editor** with syntax highlighting and drag & drop support
+- **Advanced Results Display** with Excel-like filtering and sorting
+- **Text-based Filtering** with options: Contains, Starts With, Ends With, Equals, etc.
+- **Drag & Drop** functionality from table cells to query area
+- **CSV Export** functionality (moved to menu)
+- **Professional UI** with maximized window startup
+- **Application Icon** support
+- **Beta Version** identification and warnings
+- **Enhanced Error Handling** and user feedback
+- **Memory Management** optimizations
 
 ## Troubleshooting
 
@@ -124,7 +183,18 @@ If the application doesn't start:
 
 ## Version History
 
-**v$VERSION** - Initial release
+**v2.0.0-Beta** - Enhanced Beta Release
+- Excel-like filtering with text-based options (Contains, Starts With, Ends With, Equals, etc.)
+- Drag and drop functionality from table cells to query area
+- Enhanced UI with professional styling and maximized window startup
+- Application icon support and beta version identification
+- Improved connection management and query execution
+- CSV export moved to menu bar
+- Fixed duplicate status messages and improved user experience
+- Memory management optimizations
+- Comprehensive text filtering with dialog interface
+
+**v1.0.0** - Initial release
 - Complete InfluxDB IDE with JavaFX interface
 - Standalone execution package
 - No external dependencies required
