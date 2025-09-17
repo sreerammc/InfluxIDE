@@ -23,6 +23,11 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 
+// SSL imports
+import javax.net.ssl.*;
+import java.security.cert.X509Certificate;
+import java.security.SecureRandom;
+
 /**
  * Service for InfluxDB operations
  * Handles connection testing, query execution, and data retrieval
@@ -35,6 +40,14 @@ public class InfluxDBService {
     public InfluxDBService(ApplicationConfig config) {
         this.config = config;
         this.timezoneService = new TimezoneService();
+        
+        // Load Flight SQL JDBC driver
+        try {
+            Class.forName("org.apache.arrow.flight.sql.jdbc.FlightSqlDriver");
+            Log.connectionInfo("Flight SQL JDBC driver loaded successfully");
+        } catch (ClassNotFoundException e) {
+            Log.connectionWarning("Flight SQL JDBC driver not found: " + e.getMessage());
+        }
     }
     
     /**
@@ -45,6 +58,11 @@ public class InfluxDBService {
     public boolean testConnection() throws ConnectionException {
         long startTime = System.currentTimeMillis();
         Log.connectionInfo("Testing connection to " + config.getHost() + "/" + config.getDatabase() + " using " + config.getApiType());
+        
+        // Configure SSL validation skip if needed
+        if (config.isSkipSSLValidation() && config.getProtocol() == Protocol.HTTPS) {
+            configureSSLValidationSkip();
+        }
         
         try {
             boolean result = false;
@@ -200,7 +218,7 @@ public class InfluxDBService {
         // Build JDBC URL
         String jdbcUrl = buildFlightSQLJDBCUrl(endpoint);
         
-        try (Connection connection = DriverManager.getConnection(jdbcUrl, config.getToken(), "")) {
+        try (Connection connection = DriverManager.getConnection(jdbcUrl, "token", config.getToken())) {
             connection.setNetworkTimeout(Executors.newSingleThreadExecutor(), config.getQueryTimeout().getMilliseconds());
             
             try (Statement statement = connection.createStatement()) {
@@ -229,16 +247,17 @@ public class InfluxDBService {
         String urlString = buildRESTUrl(query);
         URL url = new URL(urlString);
         
+        // Configure SSL if needed
+        if (config.isSkipSSLValidation() && config.getProtocol() == Protocol.HTTPS) {
+            configureSSLValidationSkip();
+        }
+        
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod("GET");
         connection.setRequestProperty("Authorization", "Token " + config.getToken());
         connection.setRequestProperty("Accept", "application/json");
         connection.setConnectTimeout(30000);
         connection.setReadTimeout(config.getQueryTimeout().getMilliseconds());
-        
-        if (config.isSkipSSLValidation() && config.getProtocol() == Protocol.HTTPS) {
-            // TODO: Implement SSL validation skipping
-        }
         
         int responseCode = connection.getResponseCode();
         if (responseCode != 200) {
@@ -262,19 +281,33 @@ public class InfluxDBService {
     private String buildFlightSQLJDBCUrl(String endpoint) {
         StringBuilder url = new StringBuilder("jdbc:arrow-flight://");
         
-        if (config.getProtocol() == Protocol.HTTPS) {
-            url.append("https://");
+        // Parse host and port from config.getHost()
+        String host = config.getHost();
+        int port = 443; // Default port for HTTPS
+        
+        if (host.contains(":")) {
+            String[] parts = host.split(":");
+            host = parts[0];
+            try {
+                port = Integer.parseInt(parts[1]);
+            } catch (NumberFormatException e) {
+                // Use default port if parsing fails
+                port = config.getProtocol() == Protocol.HTTPS ? 443 : 80;
+            }
         } else {
-            url.append("http://");
+            // No port specified, use default based on protocol
+            port = config.getProtocol() == Protocol.HTTPS ? 443 : 80;
         }
         
-        url.append(config.getHost());
-        
+        // Build the endpoint with host and port
+        String fullEndpoint = host + ":" + port;
         if (!endpoint.isEmpty()) {
-            url.append(endpoint);
+            fullEndpoint += endpoint;
         }
         
-        url.append("?useEncryption=").append(config.getProtocol() == Protocol.HTTPS);
+        url.append(fullEndpoint);
+        url.append("?database=").append(config.getDatabase());
+        url.append("&useEncryption=").append(config.getProtocol() == Protocol.HTTPS);
         
         return url.toString();
     }
@@ -413,5 +446,54 @@ public class InfluxDBService {
      */
     public ApplicationConfig getConfig() {
         return config;
+    }
+    
+    /**
+     * Configure SSL validation skip for self-signed certificates
+     * This method sets up a trust manager that accepts all certificates
+     */
+    private void configureSSLValidationSkip() {
+        try {
+            Log.connectionInfo("Configuring SSL validation skip for self-signed certificates");
+            
+            // Create a trust manager that accepts all certificates
+            TrustManager[] trustAllCerts = new TrustManager[] {
+                new X509TrustManager() {
+                    public X509Certificate[] getAcceptedIssuers() {
+                        return null;
+                    }
+                    
+                    public void checkClientTrusted(X509Certificate[] certs, String authType) {
+                        // Accept all client certificates
+                    }
+                    
+                    public void checkServerTrusted(X509Certificate[] certs, String authType) {
+                        // Accept all server certificates
+                    }
+                }
+            };
+            
+            // Create SSL context with the trust manager
+            SSLContext sslContext = SSLContext.getInstance("TLS");
+            sslContext.init(null, trustAllCerts, new SecureRandom());
+            
+            // Set the default SSL socket factory
+            HttpsURLConnection.setDefaultSSLSocketFactory(sslContext.getSocketFactory());
+            
+            // Create a hostname verifier that accepts all hostnames
+            HostnameVerifier allHostsValid = (hostname, session) -> true;
+            HttpsURLConnection.setDefaultHostnameVerifier(allHostsValid);
+            
+            // Set system properties for additional SSL bypass
+            System.setProperty("https.protocols", "TLSv1.2,TLSv1.3");
+            System.setProperty("com.sun.net.ssl.checkRevocation", "false");
+            System.setProperty("com.sun.security.ssl.allowUnsafeRenegotiation", "true");
+            
+            Log.connectionInfo("SSL validation skip configured successfully");
+            
+        } catch (Exception e) {
+            Log.connectionError("Failed to configure SSL validation skip: " + e.getMessage());
+            throw new ConnectionException("Failed to configure SSL validation skip: " + e.getMessage(), e);
+        }
     }
 } 

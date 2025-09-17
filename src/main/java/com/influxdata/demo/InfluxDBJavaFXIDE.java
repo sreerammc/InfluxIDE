@@ -939,15 +939,17 @@ public class InfluxDBJavaFXIDE extends Application {
     private void showAboutDialog() {
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         alert.setTitle("About InfluxDB IDE");
-        alert.setHeaderText("InfluxDB Query IDE v1.0 Beta");
+        alert.setHeaderText("InfluxDB Query IDE v2.0.0 Beta");
         alert.setContentText("A JavaFX application for querying InfluxDB databases.\n\n" +
+                           "🚧 BETA VERSION - This is a pre-release version for testing purposes.\n" +
+                           "Some features may be experimental or subject to change.\n\n" +
                            "Features:\n" +
                            "• HTTP-based InfluxDB queries\n" +
                            "• Table and JSON result views\n" +
                            "• Database exploration tools\n" +
                            "• User-friendly interface\n" +
                            "• CSV export functionality\n\n" +
-                           "Version: 1.0 Beta\n" +
+                           "Version: 2.0.0 Beta\n" +
                            "Author: Sreeram C Machavaram");
         alert.showAndWait();
     }

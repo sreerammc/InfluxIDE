@@ -23,15 +23,22 @@ public class DataProcessingService {
         }
         
         try {
+            System.out.println("DataProcessingService: Parsing response of length: " + jsonResponse.length());
+            System.out.println("DataProcessingService: Response preview: " + jsonResponse.substring(0, Math.min(200, jsonResponse.length())));
+            
             // Try to detect response format
             if (jsonResponse.trim().startsWith("[")) {
+                System.out.println("DataProcessingService: Using direct array format");
                 return parseDirectArrayFormat(jsonResponse);
             } else if (jsonResponse.contains("\"results\"") && jsonResponse.contains("\"series\"")) {
+                System.out.println("DataProcessingService: Using InfluxDB v1 format");
                 return parseInfluxDBV1Format(jsonResponse);
             } else {
+                System.out.println("DataProcessingService: Unknown response format");
                 throw new QueryExecutionException("Unknown response format");
             }
         } catch (Exception e) {
+            System.out.println("DataProcessingService: Parsing error: " + e.getMessage());
             throw new QueryExecutionException("Failed to parse response: " + e.getMessage(), e);
         }
     }

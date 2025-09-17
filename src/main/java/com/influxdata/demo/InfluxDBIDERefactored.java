@@ -6,6 +6,7 @@ import com.influxdata.demo.config.ApplicationConfig;
 import javafx.application.Application;
 import javafx.application.Platform;
 import javafx.scene.control.Alert;
+import javafx.scene.image.Image;
 import javafx.stage.Stage;
 
 /**
@@ -15,6 +16,7 @@ import javafx.stage.Stage;
 public class InfluxDBIDERefactored extends Application {
     
     private MainApplicationController mainController;
+    private ApplicationConfig connectionConfig;
     
     @Override
     public void start(Stage primaryStage) {
@@ -27,8 +29,8 @@ public class InfluxDBIDERefactored extends Application {
                 System.exit(0);
             }
             
-            // Create main application controller
-            mainController = new MainApplicationController(primaryStage);
+            // Create main application controller with connection config
+            mainController = new MainApplicationController(primaryStage, connectionConfig);
             
             // Show main window
             primaryStage.show();
@@ -52,7 +54,11 @@ public class InfluxDBIDERefactored extends Application {
     private boolean showConnectionDialog(Stage parentStage) {
         try {
             ConnectionDialog dialog = new ConnectionDialog(parentStage);
-            return dialog.showDialog();
+            boolean success = dialog.showDialog();
+            if (success) {
+                connectionConfig = dialog.getConfig();
+            }
+            return success;
         } catch (Exception e) {
             showError("Connection Error", "Failed to show connection dialog: " + e.getMessage());
             e.printStackTrace();
@@ -65,8 +71,7 @@ public class InfluxDBIDERefactored extends Application {
      */
     private void setApplicationIcon(Stage stage) {
         try {
-            // TODO: Set application icon when available
-            // stage.getIcons().add(new Image(getClass().getResourceAsStream("/icons/app_icon.png")));
+            stage.getIcons().add(new Image(getClass().getResourceAsStream("/icons/app_icon.png")));
         } catch (Exception e) {
             System.err.println("Failed to set application icon: " + e.getMessage());
         }

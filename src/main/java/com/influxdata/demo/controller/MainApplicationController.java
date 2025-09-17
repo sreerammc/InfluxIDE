@@ -2,9 +2,6 @@ package com.influxdata.demo.controller;
 
 import com.influxdata.demo.config.ApplicationConfig;
 import com.influxdata.demo.config.UIConstants;
-import com.influxdata.demo.exception.ApplicationException;
-import com.influxdata.demo.exception.ConnectionException;
-import com.influxdata.demo.exception.QueryExecutionException;
 import com.influxdata.demo.service.*;
 import com.influxdata.demo.ui.ConnectionDialog;
 import com.influxdata.demo.ui.QueryPanel;
@@ -62,9 +59,8 @@ public class MainApplicationController {
     private VBox resultsSection;
     private Label connectionStatusLabel;
     private Label querySectionStatusLabel;
-    private Label recordCountLabel;
     
-    public MainApplicationController(Stage mainStage) {
+    public MainApplicationController(Stage mainStage, ApplicationConfig connectionConfig) {
         this.mainStage = mainStage;
         
         // Initialize logging system
@@ -81,12 +77,22 @@ public class MainApplicationController {
         this.dataProcessingService = new DataProcessingService();
         this.exportService = new ExportService();
         
-        // Load configuration
-        loadConfiguration();
+        // Set connection configuration
+        if (connectionConfig != null && connectionConfig.isValid()) {
+            this.currentConfig = connectionConfig;
+            this.influxDBService = new InfluxDBService(connectionConfig);
+            Log.connectionInfo("Database connection established on startup");
+        } else {
+            // Fallback to loading from settings if no config provided
+            loadConfiguration();
+        }
         
         // Initialize UI
         initializeUI();
         setupEventHandlers();
+        
+        // Update connection status
+        updateConnectionStatusOnStartup();
         
         // Set JVM timezone
         setJVMTimezone();
@@ -122,6 +128,7 @@ public class MainApplicationController {
         mainStage.setScene(mainScene);
         mainStage.setMinWidth(UIConstants.MAIN_WINDOW_MIN_WIDTH);
         mainStage.setMinHeight(UIConstants.MAIN_WINDOW_MIN_HEIGHT);
+        mainStage.setMaximized(true);
         
         // Set application icon
         setApplicationIcon();
@@ -133,6 +140,9 @@ public class MainApplicationController {
     private VBox createMainLayout() {
         VBox mainLayout = new VBox(UIConstants.DEFAULT_SPACING);
         mainLayout.setStyle(UIConstants.BACKGROUND_STYLE);
+        
+        // Menu bar
+        MenuBar menuBar = createMenuBar();
         
         // Header section
         VBox headerSection = createHeaderSection();
@@ -146,7 +156,7 @@ public class MainApplicationController {
         // Status section
         HBox statusSection = createStatusSection();
         
-        mainLayout.getChildren().addAll(headerSection, querySection, resultsSection, statusSection);
+        mainLayout.getChildren().addAll(menuBar, headerSection, querySection, resultsSection, statusSection);
         
         return mainLayout;
     }
@@ -194,7 +204,6 @@ public class MainApplicationController {
         queryPanel.setOnExecuteQuery(this::handleExecuteQuery);
         queryPanel.setOnStopQuery(this::handleStopQuery);
         queryPanel.setOnClearQuery(this::handleClearQuery);
-        queryPanel.setOnExportResults(this::handleExportResults);
         
         querySectionBox.getChildren().add(queryPanel.getLayout());
         return querySectionBox;
@@ -216,13 +225,82 @@ public class MainApplicationController {
         // Create results panel
         resultsPanel = new ResultsPanel();
         
-        // Record count label
-        recordCountLabel = new Label("Records: 0");
-        recordCountLabel.setFont(Font.font(UIConstants.DEFAULT_FONT_FAMILY, FontWeight.BOLD, UIConstants.DEFAULT_FONT_SIZE));
-        recordCountLabel.setTextFill(javafx.scene.paint.Color.web(UIConstants.SECONDARY_COLOR));
+        // Setup drag and drop connection between results panel and query panel
+        setupDragAndDropConnection();
         
-        resultsSectionBox.getChildren().addAll(resultsTitleLabel, resultsPanel.getLayout(), recordCountLabel);
+        resultsSectionBox.getChildren().addAll(resultsTitleLabel, resultsPanel.getLayout());
         return resultsSectionBox;
+    }
+    
+    /**
+     * Create menu bar with Database, View, and Help menus
+     */
+    private MenuBar createMenuBar() {
+        MenuBar menuBar = new MenuBar();
+        menuBar.setStyle("-fx-background-color: #f0f0f0; -fx-border-color: #d0d0d0; -fx-border-width: 0 0 1 0;");
+        
+        // Database Menu
+        Menu databaseMenu = new Menu("Database");
+        databaseMenu.setStyle("-fx-font-weight: bold;");
+        
+        MenuItem showTablesItem = new MenuItem("Show Measurements");
+        showTablesItem.setOnAction(e -> handleShowMeasurements());
+        showTablesItem.setStyle("-fx-padding: 5 10 5 10;");
+        
+        MenuItem refreshConnectionItem = new MenuItem("Refresh Connection");
+        refreshConnectionItem.setOnAction(e -> handleRefreshConnection());
+        refreshConnectionItem.setStyle("-fx-padding: 5 10 5 10;");
+        
+        databaseMenu.getItems().addAll(showTablesItem, refreshConnectionItem);
+        
+        // View Menu
+        Menu viewMenu = new Menu("View");
+        viewMenu.setStyle("-fx-font-weight: bold;");
+        
+        MenuItem toggleMaximizeItem = new MenuItem("Toggle Maximize");
+        toggleMaximizeItem.setOnAction(e -> toggleMaximize());
+        toggleMaximizeItem.setStyle("-fx-padding: 5 10 5 10;");
+        
+        MenuItem toggleQuerySectionItem = new MenuItem("Toggle Query Section");
+        toggleQuerySectionItem.setOnAction(e -> toggleQuerySection());
+        toggleQuerySectionItem.setStyle("-fx-padding: 5 10 5 10;");
+        
+        MenuItem clearResultsItem = new MenuItem("Clear Results");
+        clearResultsItem.setOnAction(e -> handleClearResults());
+        clearResultsItem.setStyle("-fx-padding: 5 10 5 10;");
+        
+        viewMenu.getItems().addAll(toggleMaximizeItem, toggleQuerySectionItem, clearResultsItem);
+        
+        // Tools Menu
+        Menu toolsMenu = new Menu("Tools");
+        toolsMenu.setStyle("-fx-font-weight: bold;");
+        
+        MenuItem exportResultsItem = new MenuItem("Export Results to CSV");
+        exportResultsItem.setOnAction(e -> handleExportResults());
+        exportResultsItem.setStyle("-fx-padding: 5 10 5 10;");
+        
+        MenuItem memoryInfoItem = new MenuItem("Memory Information");
+        memoryInfoItem.setOnAction(e -> handleMemoryInfo());
+        memoryInfoItem.setStyle("-fx-padding: 5 10 5 10;");
+        
+        toolsMenu.getItems().addAll(exportResultsItem, memoryInfoItem);
+        
+        // Help Menu
+        Menu helpMenu = new Menu("Help");
+        helpMenu.setStyle("-fx-font-weight: bold;");
+        
+        MenuItem aboutItem = new MenuItem("About");
+        aboutItem.setOnAction(e -> showAboutDialog());
+        aboutItem.setStyle("-fx-padding: 5 10 5 10;");
+        
+        MenuItem helpItem = new MenuItem("Help");
+        helpItem.setOnAction(e -> showHelpDialog());
+        helpItem.setStyle("-fx-padding: 5 10 5 10;");
+        
+        helpMenu.getItems().addAll(helpItem, aboutItem);
+        
+        menuBar.getMenus().addAll(databaseMenu, viewMenu, toolsMenu, helpMenu);
+        return menuBar;
     }
     
     /**
@@ -257,30 +335,12 @@ public class MainApplicationController {
      */
     private void setupEventHandlers() {
         // Query toggle checkbox
-        queryToggleCheckBox.setOnAction(e -> toggleQuerySection());
+        queryToggleCheckBox.setOnAction(e -> toggleQuerySectionWithCheckBox());
         
         // Window close event
         mainStage.setOnCloseRequest(this::handleWindowClose);
     }
     
-    /**
-     * Toggle query section visibility
-     */
-    private void toggleQuerySection() {
-        boolean isVisible = queryToggleCheckBox.isSelected();
-        querySection.setVisible(isVisible);
-        querySection.setManaged(isVisible);
-        
-        // Update status label
-        querySectionStatusLabel.setText(isVisible ? "Query section visible" : "Query section hidden");
-        
-        // Adjust results section size
-        if (isVisible) {
-            resultsSection.setPrefHeight(400);
-        } else {
-            resultsSection.setPrefHeight(600);
-        }
-    }
     
     /**
      * Handle query execution
@@ -300,7 +360,7 @@ public class MainApplicationController {
         
         if (influxDBService == null) {
             Log.queryError("Query execution attempted without database connection");
-            showError("No database connection. Please configure connection first.");
+            showError("No database connection. Please restart the application and configure your connection.");
             return;
         }
         
@@ -334,7 +394,6 @@ public class MainApplicationController {
                     // Update UI
                     queryPanel.setQueryCompleted(!currentResults.isEmpty());
                     updateRecordCount(currentResults.size());
-                    updateConnectionStatus("Query completed successfully", true);
                     
                 } catch (Exception e) {
                     // Log query error
@@ -443,22 +502,7 @@ public class MainApplicationController {
         }
     }
     
-    /**
-     * Update record count display
-     */
-    private void updateRecordCount(int count) {
-        recordCountLabel.setText("Records: " + count);
-    }
     
-    /**
-     * Update connection status
-     */
-    private void updateConnectionStatus(String message, boolean isSuccess) {
-        connectionStatusLabel.setText(message);
-        connectionStatusLabel.setTextFill(javafx.scene.paint.Color.web(
-            isSuccess ? UIConstants.SUCCESS_COLOR : UIConstants.ERROR_COLOR
-        ));
-    }
     
     /**
      * Set JVM timezone
@@ -525,17 +569,235 @@ public class MainApplicationController {
         alert.showAndWait();
     }
     
+    // ==================== MENU HANDLERS ====================
+    
+    /**
+     * Handle show measurements menu item
+     */
+    private void handleShowMeasurements() {
+        Log.appInfo("Show measurements menu item clicked");
+        if (queryPanel != null) {
+            queryPanel.setQueryText("SHOW MEASUREMENTS");
+            handleExecuteQuery();
+        }
+    }
+    
+    /**
+     * Handle refresh connection menu item
+     */
+    private void handleRefreshConnection() {
+        Log.appInfo("Refresh connection menu item clicked");
+        try {
+            if (currentConfig != null && currentConfig.isValid()) {
+                influxDBService = new InfluxDBService(currentConfig);
+                updateConnectionStatus("Connection refreshed successfully", true);
+                showInfo("Connection Refreshed", "Database connection has been refreshed successfully.");
+            } else {
+                showError("No valid connection configuration found. Please reconnect.");
+            }
+        } catch (Exception e) {
+            Log.connectionError("Failed to refresh connection: " + e.getMessage());
+            showError("Failed to refresh connection: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Toggle maximize window
+     */
+    private void toggleMaximize() {
+        Log.appInfo("Toggle maximize menu item clicked");
+        if (mainStage.isMaximized()) {
+            mainStage.setMaximized(false);
+            mainStage.setWidth(1200);
+            mainStage.setHeight(900);
+            mainStage.centerOnScreen();
+        } else {
+            mainStage.setMaximized(true);
+        }
+    }
+    
+    /**
+     * Toggle query section visibility
+     */
+    private void toggleQuerySection() {
+        Log.appInfo("Toggle query section menu item clicked");
+        if (queryToggleCheckBox != null) {
+            queryToggleCheckBox.setSelected(!queryToggleCheckBox.isSelected());
+            toggleQuerySectionWithCheckBox();
+        }
+    }
+    
+    /**
+     * Handle clear results menu item
+     */
+    private void handleClearResults() {
+        Log.appInfo("Clear results menu item clicked");
+        if (resultsPanel != null) {
+            resultsPanel.clearResults();
+            currentResults = null;
+            updateRecordCount(0);
+        }
+    }
+    
+    /**
+     * Handle memory info menu item
+     */
+    private void handleMemoryInfo() {
+        Log.appInfo("Memory info menu item clicked");
+        showMemoryInfoDialog();
+    }
+    
+    /**
+     * Show about dialog
+     */
+    private void showAboutDialog() {
+        Log.appInfo("About dialog requested");
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle("About InfluxDB IDE");
+        alert.setHeaderText("InfluxDB IDE v2.0.0 Beta - Professional Edition");
+        alert.setContentText(
+            "A modern, user-friendly JavaFX-based IDE for querying InfluxDB databases.\n\n" +
+            "🚧 BETA VERSION - This is a pre-release version for testing purposes.\n" +
+            "Some features may be experimental or subject to change.\n\n" +
+            "Features:\n" +
+            "• Modern JavaFX UI with professional styling\n" +
+            "• Database connection management\n" +
+            "• SQL query execution with syntax highlighting\n" +
+            "• Results display with Excel-like filtering and sorting\n" +
+            "• Drag & drop functionality\n" +
+            "• CSV export capabilities\n" +
+            "• Comprehensive logging system\n\n" +
+            "Built with JavaFX and InfluxDB Java Client\n" +
+            "© 2025 InfluxDB IDE Team"
+        );
+        alert.setResizable(true);
+        alert.getDialogPane().setPrefSize(500, 400);
+        alert.showAndWait();
+    }
+    
+    /**
+     * Show help dialog
+     */
+    private void showHelpDialog() {
+        Log.appInfo("Help dialog requested");
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle("Help - InfluxDB IDE");
+        alert.setHeaderText("How to use InfluxDB IDE");
+        alert.setContentText(
+            "Getting Started:\n\n" +
+            "1. **Connect to Database**: Use the connection dialog to enter your InfluxDB details\n" +
+            "2. **Write Queries**: Type your SQL queries in the query editor\n" +
+            "3. **Execute Queries**: Click 'Execute Query' or press Ctrl+Enter\n" +
+            "4. **View Results**: Results appear in both table and JSON format\n" +
+            "5. **Filter & Sort**: Use column headers to sort and filter data\n" +
+            "6. **Export Data**: Use the Tools menu to export results to CSV\n\n" +
+            "Keyboard Shortcuts:\n" +
+            "• Ctrl+Enter: Execute query\n" +
+            "• Ctrl+E: Export results\n" +
+            "• F11: Toggle maximize\n\n" +
+            "For more help, visit the project documentation."
+        );
+        alert.setResizable(true);
+        alert.getDialogPane().setPrefSize(600, 500);
+        alert.showAndWait();
+    }
+    
+    /**
+     * Show memory information dialog
+     */
+    private void showMemoryInfoDialog() {
+        Runtime runtime = Runtime.getRuntime();
+        long totalMemory = runtime.totalMemory();
+        long freeMemory = runtime.freeMemory();
+        long usedMemory = totalMemory - freeMemory;
+        long maxMemory = runtime.maxMemory();
+        
+        String memoryInfo = String.format(
+            "Memory Information:\n\n" +
+            "Total Memory: %s MB\n" +
+            "Used Memory: %s MB\n" +
+            "Free Memory: %s MB\n" +
+            "Max Memory: %s MB\n" +
+            "Memory Usage: %.1f%%\n\n" +
+            "Available Processors: %d",
+            totalMemory / (1024 * 1024),
+            usedMemory / (1024 * 1024),
+            freeMemory / (1024 * 1024),
+            maxMemory / (1024 * 1024),
+            (double) usedMemory / maxMemory * 100,
+            runtime.availableProcessors()
+        );
+        
+        Alert alert = new Alert(Alert.AlertType.INFORMATION);
+        alert.setTitle("Memory Information");
+        alert.setHeaderText("System Memory Status");
+        alert.setContentText(memoryInfo);
+        alert.setResizable(true);
+        alert.getDialogPane().setPrefSize(400, 300);
+        alert.showAndWait();
+    }
+    
+    /**
+     * Toggle query section with checkbox
+     */
+    private void toggleQuerySectionWithCheckBox() {
+        if (queryToggleCheckBox != null && querySection != null) {
+            boolean isVisible = queryToggleCheckBox.isSelected();
+            querySection.setVisible(isVisible);
+            querySection.setManaged(isVisible);
+            
+            if (isVisible) {
+                Log.appInfo("Query section shown");
+            } else {
+                Log.appInfo("Query section hidden");
+            }
+        }
+    }
+    
     /**
      * Show info dialog
      */
     private void showInfo(String title, String message) {
-        Log.uiInfo("Info dialog shown: " + title + " - " + message);
+        Log.appInfo("Info dialog shown: " + title + " - " + message);
         Alert alert = new Alert(Alert.AlertType.INFORMATION);
         alert.setTitle(title);
         alert.setHeaderText(null);
         alert.setContentText(message);
         alert.showAndWait();
     }
+    
+    
+    /**
+     * Update record count display
+     */
+    private void updateRecordCount(int count) {
+    }
+    
+    /**
+     * Update connection status display
+     */
+    private void updateConnectionStatus(String message, boolean isSuccess) {
+        if (connectionStatusLabel != null) {
+            connectionStatusLabel.setText(message);
+            if (isSuccess) {
+                connectionStatusLabel.setTextFill(javafx.scene.paint.Color.web(UIConstants.SUCCESS_COLOR));
+            } else {
+                connectionStatusLabel.setTextFill(javafx.scene.paint.Color.web(UIConstants.ERROR_COLOR));
+            }
+        }
+    }
+    
+    /**
+     * Update connection status on startup
+     */
+    private void updateConnectionStatusOnStartup() {
+        if (influxDBService != null && currentConfig != null) {
+            updateConnectionStatus("Connected to " + currentConfig.getHost(), true);
+        } else {
+            updateConnectionStatus("No database connection", false);
+        }
+    }
+    
     
     /**
      * Get the main stage
@@ -563,5 +825,23 @@ public class MainApplicationController {
      */
     public List<Map<String, Object>> getCurrentResults() {
         return currentResults;
+    }
+    
+    /**
+     * Get the query panel for external access
+     */
+    public QueryPanel getQueryPanel() {
+        return queryPanel;
+    }
+    
+    /**
+     * Setup drag and drop connection between results panel and query panel
+     */
+    private void setupDragAndDropConnection() {
+        if (resultsPanel != null && queryPanel != null) {
+            // The drag and drop is already set up in both panels
+            // ResultsPanel handles drag detection and QueryPanel handles drop
+            Log.appInfo("Drag and drop connection established between results and query panels");
+        }
     }
 } 

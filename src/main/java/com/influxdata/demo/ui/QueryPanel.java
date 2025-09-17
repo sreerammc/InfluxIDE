@@ -8,6 +8,9 @@ import javafx.scene.layout.HBox;
 import javafx.scene.layout.VBox;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
+import javafx.scene.input.DragEvent;
+import javafx.scene.input.Dragboard;
+import javafx.scene.input.TransferMode;
 
 /**
  * Query panel component for InfluxDB IDE
@@ -20,7 +23,6 @@ public class QueryPanel {
     private Button executeButton;
     private Button stopButton;
     private Button clearButton;
-    private Button exportButton;
     private ProgressIndicator progressIndicator;
     private Label statusLabel;
     
@@ -28,12 +30,12 @@ public class QueryPanel {
     private Runnable onExecuteQuery;
     private Runnable onStopQuery;
     private Runnable onClearQuery;
-    private Runnable onExportResults;
     
     public QueryPanel() {
         initializeComponents();
         setupLayout();
         setupEventHandlers();
+        setupDragAndDrop();
     }
     
     /**
@@ -66,12 +68,6 @@ public class QueryPanel {
         clearButton.setPrefWidth(80);
         clearButton.setPrefHeight(UIConstants.BUTTON_PREF_HEIGHT);
         
-        exportButton = new Button("Export CSV");
-        exportButton.setStyle(UIConstants.SUCCESS_BUTTON_STYLE);
-        exportButton.setPrefWidth(100);
-        exportButton.setPrefHeight(UIConstants.BUTTON_PREF_HEIGHT);
-        exportButton.setDisable(true);
-        
         // Progress indicator
         progressIndicator = new ProgressIndicator();
         progressIndicator.setVisible(false);
@@ -89,7 +85,7 @@ public class QueryPanel {
         // Button row
         HBox buttonRow = new HBox(UIConstants.DEFAULT_SPACING);
         buttonRow.setAlignment(Pos.CENTER_LEFT);
-        buttonRow.getChildren().addAll(executeButton, stopButton, clearButton, exportButton, progressIndicator);
+        buttonRow.getChildren().addAll(executeButton, stopButton, clearButton, progressIndicator);
         
         // Status row
         HBox statusRow = new HBox(UIConstants.DEFAULT_SPACING);
@@ -124,11 +120,6 @@ public class QueryPanel {
             }
         });
         
-        exportButton.setOnAction(e -> {
-            if (onExportResults != null) {
-                onExportResults.run();
-            }
-        });
     }
     
     /**
@@ -141,7 +132,7 @@ public class QueryPanel {
         // Button row
         HBox buttonRow = new HBox(UIConstants.DEFAULT_SPACING);
         buttonRow.setAlignment(Pos.CENTER_LEFT);
-        buttonRow.getChildren().addAll(executeButton, stopButton, clearButton, exportButton, progressIndicator);
+        buttonRow.getChildren().addAll(executeButton, stopButton, clearButton, progressIndicator);
         
         // Status row
         HBox statusRow = new HBox(UIConstants.DEFAULT_SPACING);
@@ -173,12 +164,6 @@ public class QueryPanel {
         this.onClearQuery = handler;
     }
     
-    /**
-     * Set export results handler
-     */
-    public void setOnExportResults(Runnable handler) {
-        this.onExportResults = handler;
-    }
     
     /**
      * Get the current query text
@@ -225,7 +210,6 @@ public class QueryPanel {
         executeButton.setDisable(false);
         stopButton.setDisable(true);
         progressIndicator.setVisible(false);
-        exportButton.setDisable(!hasResults);
         
         if (hasResults) {
             statusLabel.setText("Query completed successfully");
@@ -243,18 +227,11 @@ public class QueryPanel {
         executeButton.setDisable(false);
         stopButton.setDisable(true);
         progressIndicator.setVisible(false);
-        exportButton.setDisable(true);
         
         statusLabel.setText("Error: " + errorMessage);
         statusLabel.setTextFill(javafx.scene.paint.Color.RED);
     }
     
-    /**
-     * Enable/disable export button
-     */
-    public void setExportEnabled(boolean enabled) {
-        exportButton.setDisable(!enabled);
-    }
     
     /**
      * Get the query area for external access
@@ -275,5 +252,103 @@ public class QueryPanel {
      */
     public Button getStopButton() {
         return stopButton;
+    }
+    
+    /**
+     * Setup drag and drop functionality
+     */
+    private void setupDragAndDrop() {
+        // Enable drag and drop on the query area
+        queryArea.setOnDragOver(this::handleDragOver);
+        queryArea.setOnDragDropped(this::handleDragDropped);
+        queryArea.setOnDragEntered(this::handleDragEntered);
+        queryArea.setOnDragExited(this::handleDragExited);
+    }
+    
+    /**
+     * Handle drag over event
+     */
+    private void handleDragOver(DragEvent event) {
+        if (event.getDragboard().hasString()) {
+            event.acceptTransferModes(TransferMode.COPY);
+        }
+        event.consume();
+    }
+    
+    /**
+     * Handle drag dropped event
+     */
+    private void handleDragDropped(DragEvent event) {
+        Dragboard db = event.getDragboard();
+        boolean success = false;
+        
+        if (db.hasString()) {
+            String draggedText = db.getString();
+            
+            // Get current cursor position
+            int caretPosition = queryArea.getCaretPosition();
+            
+            // Get current text
+            String currentText = queryArea.getText();
+            
+            // Insert dragged text at cursor position
+            String newText = currentText.substring(0, caretPosition) + 
+                           draggedText + 
+                           currentText.substring(caretPosition);
+            
+            queryArea.setText(newText);
+            
+            // Position cursor after inserted text
+            queryArea.positionCaret(caretPosition + draggedText.length());
+            
+            success = true;
+        }
+        
+        event.setDropCompleted(success);
+        event.consume();
+    }
+    
+    /**
+     * Handle drag entered event
+     */
+    private void handleDragEntered(DragEvent event) {
+        if (event.getDragboard().hasString()) {
+            queryArea.setStyle("-fx-border-color: #2196F3; -fx-border-width: 2px; -fx-border-radius: 3px;");
+        }
+        event.consume();
+    }
+    
+    /**
+     * Handle drag exited event
+     */
+    private void handleDragExited(DragEvent event) {
+        queryArea.setStyle("");
+        event.consume();
+    }
+    
+    /**
+     * Insert text at current cursor position
+     */
+    public void insertTextAtCursor(String text) {
+        int caretPosition = queryArea.getCaretPosition();
+        String currentText = queryArea.getText();
+        
+        String newText = currentText.substring(0, caretPosition) + 
+                        text + 
+                        currentText.substring(caretPosition);
+        
+        queryArea.setText(newText);
+        queryArea.positionCaret(caretPosition + text.length());
+    }
+    
+    /**
+     * Append text to the end of query
+     */
+    public void appendText(String text) {
+        String currentText = queryArea.getText();
+        if (!currentText.isEmpty() && !currentText.endsWith(" ")) {
+            text = " " + text;
+        }
+        queryArea.appendText(text);
     }
 } 
