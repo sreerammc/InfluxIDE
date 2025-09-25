@@ -64,11 +64,21 @@ public class ResultsPanel {
     private Map<String, String> textFilters = new HashMap<>();
     private Map<String, String> filterTypes = new HashMap<>();
     
+    // Timestamp formatting
+    private String timestampFormat = "ISO_8601";
+    
     public ResultsPanel() {
         initializeComponents();
         setupLayout();
         setupEventHandlers();
         setupDragAndDrop();
+    }
+    
+    /**
+     * Set timestamp format for display
+     */
+    public void setTimestampFormat(String format) {
+        this.timestampFormat = format != null ? format : "ISO_8601";
     }
     
     /**
@@ -304,7 +314,7 @@ public class ResultsPanel {
                     column.setPrefWidth(150);
                     column.setResizable(true);
                     
-                    // Add tooltips to cells
+                    // Add tooltips to cells and timestamp formatting
                     column.setCellFactory(col -> new TableCell<Map<String, Object>, Object>() {
                         @Override
                         protected void updateItem(Object item, boolean empty) {
@@ -313,7 +323,15 @@ public class ResultsPanel {
                                 setText(null);
                                 setTooltip(null);
                             } else {
-                                String cellText = item.toString();
+                                String cellText;
+                                
+                                // Apply timestamp formatting if this is a timestamp column
+                                if (isTimestampColumn(columnName)) {
+                                    cellText = formatTimestamp(item, timestampFormat);
+                                } else {
+                                    cellText = item.toString();
+                                }
+                                
                                 setText(cellText);
                                 
                                 // Create tooltip with full content
@@ -708,6 +726,123 @@ public class ResultsPanel {
     }
     
     /**
+     * Format timestamp based on current settings
+     */
+    private String formatTimestamp(Object value, String timestampFormat) {
+        if (value == null) return "";
+        
+        try {
+            // Try to parse as timestamp (various formats)
+            long timestamp = parseTimestamp(value);
+            
+            switch (timestampFormat) {
+                case "ISO_8601":
+                    return formatAsISO8601(timestamp);
+                case "UNIX":
+                    return String.valueOf(timestamp / 1000); // Convert to seconds
+                case "UNIX_MS":
+                    return String.valueOf(timestamp);
+                case "RFC_2822":
+                    return formatAsRFC2822(timestamp);
+                case "CUSTOM":
+                    return formatAsCustom(timestamp, "yyyy-MM-dd HH:mm:ss");
+                case "RELATIVE":
+                    return formatAsRelative(timestamp);
+                default:
+                    return value.toString();
+            }
+        } catch (Exception e) {
+            // If parsing fails, return original value
+            return value.toString();
+        }
+    }
+    
+    /**
+     * Parse timestamp from various formats
+     */
+    private long parseTimestamp(Object value) {
+        if (value instanceof Long) {
+            return (Long) value;
+        } else if (value instanceof Integer) {
+            return ((Integer) value).longValue();
+        } else if (value instanceof String) {
+            String str = (String) value;
+            try {
+                // Try parsing as Unix timestamp (seconds)
+                if (str.matches("\\d{10}")) {
+                    return Long.parseLong(str) * 1000;
+                }
+                // Try parsing as Unix timestamp (milliseconds)
+                if (str.matches("\\d{13}")) {
+                    return Long.parseLong(str);
+                }
+                // Try parsing as ISO 8601
+                return java.time.Instant.parse(str).toEpochMilli();
+            } catch (Exception e) {
+                // If all parsing fails, return current time
+                return System.currentTimeMillis();
+            }
+        }
+        return System.currentTimeMillis();
+    }
+    
+    /**
+     * Format as ISO 8601
+     */
+    private String formatAsISO8601(long timestamp) {
+        return java.time.Instant.ofEpochMilli(timestamp).toString();
+    }
+    
+    /**
+     * Format as RFC 2822
+     */
+    private String formatAsRFC2822(long timestamp) {
+        return java.time.Instant.ofEpochMilli(timestamp)
+            .atZone(java.time.ZoneId.systemDefault())
+            .format(java.time.format.DateTimeFormatter.RFC_1123_DATE_TIME);
+    }
+    
+    /**
+     * Format as custom pattern
+     */
+    private String formatAsCustom(long timestamp, String pattern) {
+        return java.time.Instant.ofEpochMilli(timestamp)
+            .atZone(java.time.ZoneId.systemDefault())
+            .format(java.time.format.DateTimeFormatter.ofPattern(pattern));
+    }
+    
+    /**
+     * Format as relative time
+     */
+    private String formatAsRelative(long timestamp) {
+        long now = System.currentTimeMillis();
+        long diff = now - timestamp;
+        
+        if (diff < 60000) { // Less than 1 minute
+            return "Just now";
+        } else if (diff < 3600000) { // Less than 1 hour
+            long minutes = diff / 60000;
+            return minutes + " minute" + (minutes == 1 ? "" : "s") + " ago";
+        } else if (diff < 86400000) { // Less than 1 day
+            long hours = diff / 3600000;
+            return hours + " hour" + (hours == 1 ? "" : "s") + " ago";
+        } else {
+            long days = diff / 86400000;
+            return days + " day" + (days == 1 ? "" : "s") + " ago";
+        }
+    }
+    
+    /**
+     * Check if a column name suggests it's a timestamp
+     */
+    private boolean isTimestampColumn(String columnName) {
+        if (columnName == null) return false;
+        String lower = columnName.toLowerCase();
+        return lower.contains("time") || lower.contains("date") || 
+               lower.equals("_time") || lower.equals("timestamp");
+    }
+    
+    /**
      * Adds double-click functionality to the results table
      */
     private void addDoubleClickFunctionality() {
@@ -744,6 +879,8 @@ public class ResultsPanel {
             popupStage.setMinWidth(500);
             popupStage.setMinHeight(400);
             
+            // Table resize listeners will be added after table creation
+            
             // Set application icon
             try {
                 popupStage.getIcons().add(new Image(getClass().getResourceAsStream("/icons/app_icon.png")));
@@ -763,18 +900,21 @@ public class ResultsPanel {
             // Details table
             TableView<Map.Entry<String, Object>> detailsTable = new TableView<>();
             detailsTable.setEditable(false);
+            detailsTable.setColumnResizePolicy(TableView.UNCONSTRAINED_RESIZE_POLICY);
             
             // Column column
             TableColumn<Map.Entry<String, Object>, String> columnCol = new TableColumn<>("Column");
             columnCol.setCellValueFactory(cellData -> new SimpleStringProperty(cellData.getValue().getKey()));
             columnCol.setPrefWidth(200);
             columnCol.setResizable(true);
+            columnCol.setMinWidth(150);
             
             // Value column with copy functionality
             TableColumn<Map.Entry<String, Object>, Object> valueCol = new TableColumn<>("Value");
             valueCol.setCellValueFactory(cellData -> new SimpleObjectProperty<>(cellData.getValue().getValue()));
             valueCol.setPrefWidth(300);
             valueCol.setResizable(true);
+            valueCol.setMinWidth(200);
             
             // Add copy functionality to value cells
             valueCol.setCellFactory(column -> new TableCell<Map.Entry<String, Object>, Object>() {
@@ -815,17 +955,23 @@ public class ResultsPanel {
             }
             detailsTable.setItems(rowData);
             
-            // Close button
-            Button closeButton = new Button("Close");
-            closeButton.setStyle("-fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;");
-            closeButton.setPrefWidth(100);
-            closeButton.setOnAction(e -> popupStage.close());
+            // Add resize listeners after table is created
+            popupStage.widthProperty().addListener((obs, oldVal, newVal) -> {
+                detailsTable.setPrefWidth(newVal.doubleValue() - 40); // Account for padding
+            });
             
-            HBox buttonBox = new HBox(10);
-            buttonBox.setAlignment(Pos.CENTER);
-            buttonBox.getChildren().add(closeButton);
+            popupStage.heightProperty().addListener((obs, oldVal, newVal) -> {
+                detailsTable.setPrefHeight(newVal.doubleValue() - 120); // Account for title and instruction
+            });
             
-            popupLayout.getChildren().addAll(titleLabel, detailsTable, buttonBox);
+            // Remove close button - users can press Escape to close
+            // Add instruction label instead
+            Label instructionLabel = new Label("Press Escape to close");
+            instructionLabel.setFont(Font.font("Arial", 10));
+            instructionLabel.setTextFill(Color.GRAY);
+            instructionLabel.setStyle("-fx-font-style: italic;");
+            
+            popupLayout.getChildren().addAll(titleLabel, detailsTable, instructionLabel);
             
             Scene popupScene = new Scene(popupLayout);
             popupStage.setScene(popupScene);

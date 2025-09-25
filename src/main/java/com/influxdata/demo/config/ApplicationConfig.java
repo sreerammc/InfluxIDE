@@ -25,6 +25,9 @@ public class ApplicationConfig {
     private boolean timezoneConversion = true;
     private String selectedTimezone = "System Default (Local)";
     
+    // Timestamp format settings
+    private String timestampFormat = "ISO_8601";
+    
     // Default constructor
     public ApplicationConfig() {}
     
@@ -39,6 +42,7 @@ public class ApplicationConfig {
         this.queryTimeout = other.queryTimeout;
         this.timezoneConversion = other.timezoneConversion;
         this.selectedTimezone = other.selectedTimezone;
+        this.timestampFormat = other.timestampFormat;
     }
     
     // Getters and Setters
@@ -112,6 +116,14 @@ public class ApplicationConfig {
     
     public void setSelectedTimezone(String selectedTimezone) {
         this.selectedTimezone = selectedTimezone != null ? selectedTimezone : "System Default (Local)";
+    }
+    
+    public String getTimestampFormat() {
+        return timestampFormat;
+    }
+    
+    public void setTimestampFormat(String timestampFormat) {
+        this.timestampFormat = timestampFormat != null ? timestampFormat : "ISO_8601";
     }
     
     /**

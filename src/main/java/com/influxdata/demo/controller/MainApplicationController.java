@@ -17,7 +17,9 @@ import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
 import javafx.scene.text.TextAlignment;
 import javafx.scene.image.Image;
+import javafx.scene.paint.Color;
 import javafx.stage.FileChooser;
+import javafx.stage.Modality;
 import javafx.stage.Stage;
 import javafx.stage.WindowEvent;
 
@@ -219,6 +221,11 @@ public class MainApplicationController {
         // Create results panel
         resultsPanel = new ResultsPanel();
         
+        // Set timestamp format from current config
+        if (currentConfig != null) {
+            resultsPanel.setTimestampFormat(currentConfig.getTimestampFormat());
+        }
+        
         // Setup drag and drop connection between results panel and query panel
         setupDragAndDropConnection();
         
@@ -273,7 +280,11 @@ public class MainApplicationController {
         memoryInfoItem.setOnAction(e -> handleMemoryInfo());
         memoryInfoItem.setStyle("-fx-padding: 5 10 5 10;");
         
-        toolsMenu.getItems().addAll(exportResultsItem, memoryInfoItem);
+        MenuItem timestampFormatItem = new MenuItem("Timestamp Format Settings");
+        timestampFormatItem.setOnAction(e -> showTimestampFormatDialog());
+        timestampFormatItem.setStyle("-fx-padding: 5 10 5 10;");
+        
+        toolsMenu.getItems().addAll(exportResultsItem, memoryInfoItem, timestampFormatItem);
         
         // Help Menu
         Menu helpMenu = new Menu("Help");
@@ -798,5 +809,160 @@ public class MainApplicationController {
             // ResultsPanel handles drag detection and QueryPanel handles drop
             Log.appInfo("Drag and drop connection established between results and query panels");
         }
+    }
+    
+    /**
+     * Show timestamp format settings dialog
+     */
+    private void showTimestampFormatDialog() {
+        Stage dialogStage = new Stage();
+        dialogStage.initModality(Modality.APPLICATION_MODAL);
+        dialogStage.initOwner(mainStage);
+        dialogStage.setTitle("Timestamp Format Settings");
+        dialogStage.setResizable(false);
+        dialogStage.setMinWidth(400);
+        dialogStage.setMinHeight(300);
+        
+        // Set application icon
+        try {
+            dialogStage.getIcons().add(new Image(getClass().getResourceAsStream("/icons/app_icon.png")));
+        } catch (Exception e) {
+            System.err.println("Failed to set dialog icon: " + e.getMessage());
+        }
+        
+        VBox dialogLayout = new VBox(20);
+        dialogLayout.setPadding(new Insets(20));
+        dialogLayout.setStyle("-fx-background-color: #f5f5f5;");
+        
+        // Title
+        Label titleLabel = new Label("Timestamp Format Settings");
+        titleLabel.setFont(Font.font("Arial", FontWeight.BOLD, 18));
+        titleLabel.setTextFill(Color.DARKBLUE);
+        
+        // Description
+        Label descLabel = new Label("Choose how timestamp columns should be displayed in query results:");
+        descLabel.setFont(Font.font("Arial", 12));
+        descLabel.setWrapText(true);
+        
+        // Format selection
+        VBox formatBox = new VBox(10);
+        formatBox.setPadding(new Insets(10));
+        formatBox.setStyle("-fx-background-color: white; -fx-border-color: #cccccc; -fx-border-radius: 5; -fx-background-radius: 5;");
+        
+        Label formatLabel = new Label("Timestamp Format:");
+        formatLabel.setFont(Font.font("Arial", FontWeight.BOLD, 12));
+        
+        ComboBox<String> formatCombo = new ComboBox<>();
+        formatCombo.getItems().addAll(
+            "ISO 8601 (2023-12-25T10:30:45Z)",
+            "Unix Timestamp (1703505045)",
+            "Unix Timestamp (ms) (1703505045000)",
+            "RFC 2822 (Mon, 25 Dec 2023 10:30:45 GMT)",
+            "Custom Format (yyyy-MM-dd HH:mm:ss)",
+            "Relative Time (2 hours ago)"
+        );
+        formatCombo.setValue(getCurrentTimestampFormatDisplay());
+        formatCombo.setPrefWidth(300);
+        
+        // Custom format field (shown when Custom Format is selected)
+        TextField customFormatField = new TextField("yyyy-MM-dd HH:mm:ss");
+        customFormatField.setPromptText("Enter custom format pattern (e.g., yyyy-MM-dd HH:mm:ss)");
+        customFormatField.setPrefWidth(300);
+        customFormatField.setVisible(formatCombo.getValue().contains("Custom"));
+        
+        // Show/hide custom format field based on selection
+        formatCombo.setOnAction(e -> {
+            customFormatField.setVisible(formatCombo.getValue().contains("Custom"));
+        });
+        
+        formatBox.getChildren().addAll(formatLabel, formatCombo, customFormatField);
+        
+        // Buttons
+        HBox buttonBox = new HBox(10);
+        buttonBox.setAlignment(Pos.CENTER);
+        
+        Button saveButton = new Button("Save");
+        saveButton.setStyle("-fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;");
+        saveButton.setPrefWidth(80);
+        saveButton.setOnAction(e -> {
+            saveTimestampFormat(formatCombo.getValue(), customFormatField.getText());
+            dialogStage.close();
+        });
+        
+        Button cancelButton = new Button("Cancel");
+        cancelButton.setStyle("-fx-background-color: #757575; -fx-text-fill: white; -fx-font-weight: bold;");
+        cancelButton.setPrefWidth(80);
+        cancelButton.setOnAction(e -> dialogStage.close());
+        
+        buttonBox.getChildren().addAll(saveButton, cancelButton);
+        
+        dialogLayout.getChildren().addAll(titleLabel, descLabel, formatBox, buttonBox);
+        
+        Scene dialogScene = new Scene(dialogLayout);
+        dialogStage.setScene(dialogScene);
+        dialogStage.showAndWait();
+    }
+    
+    /**
+     * Get current timestamp format display text
+     */
+    private String getCurrentTimestampFormatDisplay() {
+        String format = currentConfig != null ? currentConfig.getTimestampFormat() : "ISO_8601";
+        switch (format) {
+            case "ISO_8601": return "ISO 8601 (2023-12-25T10:30:45Z)";
+            case "UNIX": return "Unix Timestamp (1703505045)";
+            case "UNIX_MS": return "Unix Timestamp (ms) (1703505045000)";
+            case "RFC_2822": return "RFC 2822 (Mon, 25 Dec 2023 10:30:45 GMT)";
+            case "CUSTOM": return "Custom Format (yyyy-MM-dd HH:mm:ss)";
+            case "RELATIVE": return "Relative Time (2 hours ago)";
+            default: return "ISO 8601 (2023-12-25T10:30:45Z)";
+        }
+    }
+    
+    /**
+     * Save timestamp format setting
+     */
+    private void saveTimestampFormat(String selectedFormat, String customFormat) {
+        try {
+            String formatKey = getFormatKey(selectedFormat);
+            if (currentConfig != null) {
+                currentConfig.setTimestampFormat(formatKey);
+                settingsService.saveSettings(currentConfig);
+                
+                // Update results panel with new timestamp format
+                if (resultsPanel != null) {
+                    resultsPanel.setTimestampFormat(formatKey);
+                }
+                
+                Log.appInfo("Timestamp format updated to: " + formatKey);
+                
+                // Show success message
+                Alert alert = new Alert(Alert.AlertType.INFORMATION);
+                alert.setTitle("Settings Saved");
+                alert.setHeaderText(null);
+                alert.setContentText("Timestamp format has been updated successfully!");
+                alert.showAndWait();
+            }
+        } catch (Exception e) {
+            Log.appError("Failed to save timestamp format: " + e.getMessage());
+            Alert alert = new Alert(Alert.AlertType.ERROR);
+            alert.setTitle("Error");
+            alert.setHeaderText(null);
+            alert.setContentText("Failed to save timestamp format: " + e.getMessage());
+            alert.showAndWait();
+        }
+    }
+    
+    /**
+     * Convert display format to format key
+     */
+    private String getFormatKey(String displayFormat) {
+        if (displayFormat.contains("ISO 8601")) return "ISO_8601";
+        if (displayFormat.contains("Unix Timestamp (ms)")) return "UNIX_MS";
+        if (displayFormat.contains("Unix Timestamp")) return "UNIX";
+        if (displayFormat.contains("RFC 2822")) return "RFC_2822";
+        if (displayFormat.contains("Custom Format")) return "CUSTOM";
+        if (displayFormat.contains("Relative Time")) return "RELATIVE";
+        return "ISO_8601";
     }
 } 

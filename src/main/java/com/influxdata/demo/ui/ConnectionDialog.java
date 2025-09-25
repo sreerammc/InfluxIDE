@@ -7,6 +7,7 @@ import com.influxdata.demo.model.Protocol;
 import com.influxdata.demo.model.QueryTimeout;
 import com.influxdata.demo.service.SettingsService;
 import com.influxdata.demo.service.TimezoneService;
+import com.influxdata.demo.service.InfluxDBService;
 import com.influxdata.demo.util.Log;
 import javafx.geometry.Insets;
 import javafx.geometry.Pos;
@@ -472,8 +473,15 @@ public class ConnectionDialog {
         // Test connection asynchronously
         CompletableFuture.supplyAsync(() -> {
             try {
-                // TODO: Implement actual connection testing
-                return "Connection test successful";
+                // Test the connection by attempting to connect
+                InfluxDBService influxService = new InfluxDBService(testConfig);
+                boolean connected = influxService.testConnection();
+                
+                if (connected) {
+                    return "Connection test successful";
+                } else {
+                    return "Error: Failed to connect to InfluxDB. Please check your connection details.";
+                }
             } catch (Exception ex) {
                 return "Error: " + ex.getMessage();
             }
@@ -484,11 +492,11 @@ public class ConnectionDialog {
                 
                 if (result.startsWith("Error:")) {
                     Log.connectionError("Connection test failed after " + testTime + "ms: " + result);
-                    updateStatus("Connection test failed!", false);
+                    updateStatus("Connection test failed! Please check your connection details.", false);
                     showErrorDialog("Test Connection Failed", result);
                 } else {
                     Log.connectionInfo("Connection test successful after " + testTime + "ms");
-                    updateStatus("Connection test successful! Click Connect to continue.", true);
+                    updateStatus("Connection test successful! You can now click Connect to proceed.", true);
                 }
             });
         });
@@ -508,20 +516,55 @@ public class ConnectionDialog {
             return;
         }
         
-        Log.connectionInfo("Saving connection configuration for " + config.getHost() + "/" + config.getDatabase());
+        Log.connectionInfo("Testing connection before saving configuration for " + config.getHost() + "/" + config.getDatabase());
         
-        // Save settings
-        try {
-            settingsService.saveSettings(config);
-            Log.connectionInfo("Connection configuration saved successfully");
-            connectionSuccessful = true;
-            dialogStage.close();
-        } catch (Exception e) {
-            Log.connectionError("Failed to save connection settings: " + e.getMessage());
-            Log.logException("connection", "Settings save error", e);
-            updateStatus("Failed to save settings", false);
-            showErrorDialog("Settings Error", "Failed to save settings: " + e.getMessage());
-        }
+        // Disable connect button and show testing status
+        connectButton.setDisable(true);
+        connectButton.setText("Testing...");
+        updateStatus("Testing connection...", true);
+        
+        // Test connection before allowing to proceed
+        CompletableFuture.supplyAsync(() -> {
+            try {
+                InfluxDBService influxService = new InfluxDBService(config);
+                boolean connected = influxService.testConnection();
+                
+                if (connected) {
+                    return "Connection successful";
+                } else {
+                    return "Error: Failed to connect to InfluxDB. Please check your connection details.";
+                }
+            } catch (Exception ex) {
+                return "Error: " + ex.getMessage();
+            }
+        }).thenAcceptAsync(result -> {
+            javafx.application.Platform.runLater(() -> {
+                connectButton.setDisable(false);
+                connectButton.setText("Connect");
+                
+                if (result.startsWith("Error:")) {
+                    Log.connectionError("Connection test failed: " + result);
+                    updateStatus("Connection failed! Please check your details.", false);
+                    showErrorDialog("Connection Failed", result);
+                } else {
+                    Log.connectionInfo("Connection test successful, saving configuration");
+                    updateStatus("Connection successful! Saving settings...", true);
+                    
+                    // Save settings only after successful connection test
+                    try {
+                        settingsService.saveSettings(config);
+                        Log.connectionInfo("Connection configuration saved successfully");
+                        connectionSuccessful = true;
+                        dialogStage.close();
+                    } catch (Exception e) {
+                        Log.connectionError("Failed to save connection settings: " + e.getMessage());
+                        Log.logException("connection", "Settings save error", e);
+                        updateStatus("Failed to save settings", false);
+                        showErrorDialog("Settings Error", "Failed to save settings: " + e.getMessage());
+                    }
+                }
+            });
+        });
     }
     
     /**
