@@ -168,16 +168,16 @@ public class MainApplicationController {
         headerBox.setPadding(new Insets(UIConstants.DEFAULT_SPACING));
         headerBox.setStyle(UIConstants.BACKGROUND_STYLE);
         
-        // Title
-        Label titleLabel = new Label("InfluxDB IDE v2.0.0 - Professional Edition");
-        titleLabel.setFont(Font.font(UIConstants.DEFAULT_FONT_FAMILY, FontWeight.BOLD, UIConstants.TITLE_FONT_SIZE));
-        titleLabel.setTextFill(javafx.scene.paint.Color.web(UIConstants.TITLE_COLOR));
-        titleLabel.setTextAlignment(TextAlignment.CENTER);
+        // Title label removed as requested
+        // Label titleLabel = new Label("InfluxDB IDE v2.0.0 - Professional Edition");
+        // titleLabel.setFont(Font.font(UIConstants.DEFAULT_FONT_FAMILY, FontWeight.BOLD, UIConstants.TITLE_FONT_SIZE));
+        // titleLabel.setTextFill(javafx.scene.paint.Color.web(UIConstants.TITLE_COLOR));
+        // titleLabel.setTextAlignment(TextAlignment.CENTER);
         
         // Header layout
         HBox headerLayout = new HBox(UIConstants.DEFAULT_SPACING);
         headerLayout.setAlignment(Pos.CENTER);
-        headerLayout.getChildren().add(titleLabel);
+        // headerLayout.getChildren().add(titleLabel); // titleLabel removed
         
         headerBox.getChildren().add(headerLayout);
         return headerBox;

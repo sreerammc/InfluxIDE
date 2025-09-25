@@ -25,6 +25,16 @@ import javafx.scene.control.Label;
 import javafx.stage.Stage;
 import javafx.stage.Modality;
 import javafx.scene.Scene;
+import javafx.scene.control.TableView;
+import javafx.scene.control.TableColumn;
+import javafx.scene.control.TableCell;
+import javafx.scene.control.Alert;
+import javafx.scene.input.Clipboard;
+import javafx.scene.input.KeyEvent;
+import javafx.scene.input.KeyCode;
+import javafx.scene.image.Image;
+import javafx.beans.property.SimpleStringProperty;
+import javafx.beans.property.SimpleObjectProperty;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -294,6 +304,27 @@ public class ResultsPanel {
                     column.setPrefWidth(150);
                     column.setResizable(true);
                     
+                    // Add tooltips to cells
+                    column.setCellFactory(col -> new TableCell<Map<String, Object>, Object>() {
+                        @Override
+                        protected void updateItem(Object item, boolean empty) {
+                            super.updateItem(item, empty);
+                            if (empty || item == null) {
+                                setText(null);
+                                setTooltip(null);
+                            } else {
+                                String cellText = item.toString();
+                                setText(cellText);
+                                
+                                // Create tooltip with full content
+                                Tooltip tooltip = new Tooltip(cellText);
+                                tooltip.setMaxWidth(300);
+                                tooltip.setWrapText(true);
+                                setTooltip(tooltip);
+                            }
+                        }
+                    });
+                    
                     // Create filter button for column header
                     createColumnFilterButton(column, columnName);
                     
@@ -310,6 +341,8 @@ public class ResultsPanel {
             // Apply current filter or show all data
             applyGlobalFilter();
             
+            // Add double-click functionality after data is loaded
+            addDoubleClickFunctionality();
             
         } catch (Exception e) {
             showError("Failed to display results: " + e.getMessage());
@@ -672,5 +705,142 @@ public class ResultsPanel {
         }
         
         updateRecordCount(tableData.size());
+    }
+    
+    /**
+     * Adds double-click functionality to the results table
+     */
+    private void addDoubleClickFunctionality() {
+        resultsTable.setOnMouseClicked(event -> {
+            if (event.getClickCount() == 2) {
+                showRowDetailsPopup();
+            }
+        });
+    }
+    
+    /**
+     * Shows a popup with row details in a two-column layout
+     * Allows copying cell values and closes on Escape key
+     */
+    private void showRowDetailsPopup() {
+        try {
+            Map<String, Object> selectedRow = resultsTable.getSelectionModel().getSelectedItem();
+            
+            // If no row is selected, try to get the first row or show a message
+            if (selectedRow == null) {
+                if (resultsTable.getItems().isEmpty()) {
+                    showError("No data available to show details.");
+                    return;
+                } else {
+                    // Use the first row as fallback
+                    selectedRow = resultsTable.getItems().get(0);
+                }
+            }
+            
+            Stage popupStage = new Stage();
+            popupStage.initModality(Modality.APPLICATION_MODAL);
+            popupStage.setTitle("Row Details");
+            popupStage.setResizable(true);
+            popupStage.setMinWidth(500);
+            popupStage.setMinHeight(400);
+            
+            // Set application icon
+            try {
+                popupStage.getIcons().add(new Image(getClass().getResourceAsStream("/icons/app_icon.png")));
+            } catch (Exception e) {
+                System.err.println("Failed to set popup icon: " + e.getMessage());
+            }
+            
+            VBox popupLayout = new VBox(15);
+            popupLayout.setPadding(new Insets(20));
+            popupLayout.setStyle("-fx-background-color: #f5f5f5;");
+            
+            // Title
+            Label titleLabel = new Label("Row Details");
+            titleLabel.setFont(Font.font("Arial", FontWeight.BOLD, 18));
+            titleLabel.setTextFill(Color.DARKBLUE);
+            
+            // Details table
+            TableView<Map.Entry<String, Object>> detailsTable = new TableView<>();
+            detailsTable.setEditable(false);
+            
+            // Column column
+            TableColumn<Map.Entry<String, Object>, String> columnCol = new TableColumn<>("Column");
+            columnCol.setCellValueFactory(cellData -> new SimpleStringProperty(cellData.getValue().getKey()));
+            columnCol.setPrefWidth(200);
+            columnCol.setResizable(true);
+            
+            // Value column with copy functionality
+            TableColumn<Map.Entry<String, Object>, Object> valueCol = new TableColumn<>("Value");
+            valueCol.setCellValueFactory(cellData -> new SimpleObjectProperty<>(cellData.getValue().getValue()));
+            valueCol.setPrefWidth(300);
+            valueCol.setResizable(true);
+            
+            // Add copy functionality to value cells
+            valueCol.setCellFactory(column -> new TableCell<Map.Entry<String, Object>, Object>() {
+                @Override
+                protected void updateItem(Object item, boolean empty) {
+                    super.updateItem(item, empty);
+                    if (empty || item == null) {
+                        setText(null);
+                        setTooltip(null);
+                    } else {
+                        setText(item.toString());
+                        setTooltip(new Tooltip(item.toString()));
+                        
+                        // Add double-click to copy functionality
+                        setOnMouseClicked(event -> {
+                            if (event.getClickCount() == 2) {
+                                ClipboardContent content = new ClipboardContent();
+                                content.putString(item.toString());
+                                Clipboard.getSystemClipboard().setContent(content);
+                                
+                                Alert copiedAlert = new Alert(Alert.AlertType.INFORMATION);
+                                copiedAlert.setTitle("Copied");
+                                copiedAlert.setHeaderText(null);
+                                copiedAlert.setContentText("Value copied to clipboard!");
+                                copiedAlert.showAndWait();
+                            }
+                        });
+                    }
+                }
+            });
+            
+            detailsTable.getColumns().addAll(columnCol, valueCol);
+            
+            // Populate table with row data
+            ObservableList<Map.Entry<String, Object>> rowData = FXCollections.observableArrayList();
+            for (Map.Entry<String, Object> entry : selectedRow.entrySet()) {
+                rowData.add(entry);
+            }
+            detailsTable.setItems(rowData);
+            
+            // Close button
+            Button closeButton = new Button("Close");
+            closeButton.setStyle("-fx-background-color: #2196F3; -fx-text-fill: white; -fx-font-weight: bold;");
+            closeButton.setPrefWidth(100);
+            closeButton.setOnAction(e -> popupStage.close());
+            
+            HBox buttonBox = new HBox(10);
+            buttonBox.setAlignment(Pos.CENTER);
+            buttonBox.getChildren().add(closeButton);
+            
+            popupLayout.getChildren().addAll(titleLabel, detailsTable, buttonBox);
+            
+            Scene popupScene = new Scene(popupLayout);
+            popupStage.setScene(popupScene);
+            
+            // Add escape key support
+            popupStage.addEventFilter(KeyEvent.KEY_PRESSED, event -> {
+                if (event.getCode() == KeyCode.ESCAPE) {
+                    popupStage.close();
+                }
+            });
+            
+            popupStage.showAndWait();
+            
+        } catch (Exception e) {
+            showError("Failed to show row details: " + e.getMessage());
+        }
     }
 } 

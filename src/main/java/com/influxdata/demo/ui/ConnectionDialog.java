@@ -17,6 +17,8 @@ import javafx.scene.layout.VBox;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
 import javafx.scene.paint.Color;
+import javafx.scene.image.Image;
+import javafx.scene.image.ImageView;
 import javafx.stage.Modality;
 import javafx.stage.Stage;
 
@@ -99,6 +101,14 @@ public class ConnectionDialog {
         stage.setResizable(false);
         stage.setMinHeight(UIConstants.CONNECTION_DIALOG_MIN_HEIGHT);
         stage.setMinWidth(UIConstants.CONNECTION_DIALOG_MIN_WIDTH);
+        
+        // Set application icon
+        try {
+            stage.getIcons().add(new Image(getClass().getResourceAsStream("/icons/app_icon.png")));
+        } catch (Exception e) {
+            System.err.println("Failed to set dialog icon: " + e.getMessage());
+        }
+        
         return stage;
     }
     
@@ -112,7 +122,7 @@ public class ConnectionDialog {
         mainLayout.setStyle(UIConstants.BACKGROUND_STYLE);
         
         // Title
-        Label titleLabel = createTitleLabel();
+        HBox titleLabel = createTitleLabel();
         
         // Connection form
         VBox formBox = createConnectionForm();
@@ -128,13 +138,32 @@ public class ConnectionDialog {
     }
     
     /**
-     * Create title label
+     * Create title label with icon
      */
-    private Label createTitleLabel() {
+    private HBox createTitleLabel() {
+        HBox titleBox = new HBox(UIConstants.LAYOUT_SPACING);
+        titleBox.setAlignment(Pos.CENTER);
+        
+        // Add application icon
+        ImageView titleIcon = new ImageView();
+        try {
+            Image appIcon = new Image(getClass().getResourceAsStream("/icons/app_icon.png"));
+            titleIcon.setImage(appIcon);
+            titleIcon.setFitWidth(32);
+            titleIcon.setFitHeight(32);
+        } catch (Exception e) {
+            // Create a simple programmatic icon as fallback
+            titleIcon.setFitWidth(32);
+            titleIcon.setFitHeight(32);
+            titleIcon.setStyle("-fx-background-color: #2196F3; -fx-background-radius: 4;");
+        }
+        
         Label label = new Label("InfluxDB Connection Setup");
         label.setFont(Font.font(UIConstants.DEFAULT_FONT_FAMILY, FontWeight.BOLD, UIConstants.TITLE_FONT_SIZE));
         label.setTextFill(Color.web(UIConstants.TITLE_COLOR));
-        return label;
+        
+        titleBox.getChildren().addAll(titleIcon, label);
+        return titleBox;
     }
     
     /**
