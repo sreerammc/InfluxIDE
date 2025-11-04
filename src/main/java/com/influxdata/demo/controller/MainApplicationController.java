@@ -2,6 +2,7 @@ package com.influxdata.demo.controller;
 
 import com.influxdata.demo.config.ApplicationConfig;
 import com.influxdata.demo.config.UIConstants;
+import com.influxdata.demo.model.ApiType;
 import com.influxdata.demo.service.*;
 import com.influxdata.demo.ui.ConnectionDialog;
 import com.influxdata.demo.ui.QueryPanel;
@@ -13,9 +14,9 @@ import javafx.geometry.Pos;
 import javafx.scene.Scene;
 import javafx.scene.control.*;
 import javafx.scene.layout.*;
+import javafx.geometry.Orientation;
 import javafx.scene.text.Font;
 import javafx.scene.text.FontWeight;
-import javafx.scene.text.TextAlignment;
 import javafx.scene.image.Image;
 import javafx.scene.paint.Color;
 import javafx.stage.FileChooser;
@@ -47,7 +48,6 @@ public class MainApplicationController {
     private final ExportService exportService;
     
     // UI Components
-    private ConnectionDialog connectionDialog;
     private QueryPanel queryPanel;
     private ResultsPanel resultsPanel;
     
@@ -60,6 +60,7 @@ public class MainApplicationController {
     private VBox querySection;
     private VBox resultsSection;
     private Label connectionStatusLabel;
+    private Label connectionInfoLabel;
     
     public MainApplicationController(Stage mainStage, ApplicationConfig connectionConfig) {
         this.mainStage = mainStage;
@@ -252,7 +253,11 @@ public class MainApplicationController {
         refreshConnectionItem.setOnAction(e -> handleRefreshConnection());
         refreshConnectionItem.setStyle("-fx-padding: 5 10 5 10;");
         
-        databaseMenu.getItems().addAll(showTablesItem, refreshConnectionItem);
+        MenuItem changeConnectionItem = new MenuItem("Change Connection");
+        changeConnectionItem.setOnAction(e -> handleChangeConnection());
+        changeConnectionItem.setStyle("-fx-padding: 5 10 5 10;");
+        
+        databaseMenu.getItems().addAll(showTablesItem, refreshConnectionItem, new SeparatorMenuItem(), changeConnectionItem);
         
         // View Menu
         Menu viewMenu = new Menu("View");
@@ -318,7 +323,19 @@ public class MainApplicationController {
         connectionStatusLabel.setFont(Font.font(UIConstants.DEFAULT_FONT_FAMILY, FontWeight.NORMAL, UIConstants.SMALL_FONT_SIZE));
         connectionStatusLabel.setTextFill(javafx.scene.paint.Color.web(UIConstants.SUCCESS_COLOR));
         
-        statusBox.getChildren().add(connectionStatusLabel);
+        // Separator
+        Separator separator = new Separator();
+        separator.setOrientation(Orientation.VERTICAL);
+        separator.setPrefHeight(20);
+        
+        // Connection info (host and database)
+        connectionInfoLabel = new Label("Not connected");
+        connectionInfoLabel.setFont(Font.font(UIConstants.DEFAULT_FONT_FAMILY, FontWeight.NORMAL, UIConstants.SMALL_FONT_SIZE));
+        connectionInfoLabel.setTextFill(javafx.scene.paint.Color.web(UIConstants.SECONDARY_COLOR));
+        connectionInfoLabel.setTooltip(new Tooltip("Current database connection"));
+        
+        statusBox.getChildren().addAll(connectionStatusLabel, separator, connectionInfoLabel);
+        
         return statusBox;
     }
     
@@ -569,7 +586,17 @@ public class MainApplicationController {
     private void handleShowMeasurements() {
         Log.appInfo("Show measurements menu item clicked");
         if (queryPanel != null) {
-            queryPanel.setQueryText("SHOW MEASUREMENTS");
+            // For InfluxDB 3 Java API, use SHOW TABLES; for others, use SHOW MEASUREMENTS
+            String query;
+            if (currentConfig != null && currentConfig.getApiType() == ApiType.INFLUXDB_3_API) {
+                query = "SHOW TABLES";
+                Log.appInfo("Using SHOW TABLES for InfluxDB 3 Java API");
+            } else {
+                query = "SHOW MEASUREMENTS";
+                Log.appInfo("Using SHOW MEASUREMENTS for " + 
+                    (currentConfig != null ? currentConfig.getApiType() : "unknown API"));
+            }
+            queryPanel.setQueryText(query);
             handleExecuteQuery();
         }
     }
@@ -590,6 +617,72 @@ public class MainApplicationController {
         } catch (Exception e) {
             Log.connectionError("Failed to refresh connection: " + e.getMessage());
             showError("Failed to refresh connection: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Handle change connection menu item
+     */
+    private void handleChangeConnection() {
+        Log.appInfo("Change connection menu item clicked");
+        
+        // Create new connection dialog with current config pre-populated
+        ConnectionDialog dialog = new ConnectionDialog(mainStage);
+        
+        // Show dialog with current config pre-populated (or load from saved settings)
+        boolean connectionSuccessful = dialog.showDialog(currentConfig);
+        
+        if (connectionSuccessful) {
+            // Get new configuration from dialog
+            ApplicationConfig newConfig = dialog.getConfig();
+            
+            if (newConfig != null && newConfig.isValid()) {
+                // Update current configuration
+                this.currentConfig = newConfig;
+                
+                // Create new service with updated configuration
+                this.influxDBService = new InfluxDBService(newConfig);
+                
+                // Save settings
+                try {
+                    settingsService.saveSettings(newConfig);
+                    Log.appInfo("Connection settings updated and saved");
+                } catch (Exception e) {
+                    Log.appError("Failed to save connection settings: " + e.getMessage());
+                }
+                
+                // Update JVM timezone if timezone conversion is enabled
+                setJVMTimezone();
+                
+                // Update timestamp format in results panel
+                if (resultsPanel != null) {
+                    resultsPanel.setTimestampFormat(newConfig.getTimestampFormat());
+                }
+                
+                // Update connection status and info
+                updateConnectionStatus("Connected", true);
+                updateConnectionInfo();
+                
+                // Show success message
+                showInfo("Connection Changed", 
+                    "Successfully connected to:\n" +
+                    "Host: " + newConfig.getHost() + "\n" +
+                    "Database: " + newConfig.getDatabase() + "\n" +
+                    "API Type: " + newConfig.getApiType());
+                
+                // Clear current results as they're from the old connection
+                if (resultsPanel != null) {
+                    resultsPanel.clearResults();
+                }
+                currentResults = null;
+                
+            } else {
+                Log.connectionError("Invalid connection configuration after change");
+                showError("Invalid connection configuration. Please try again.");
+                updateConnectionStatus("Connection failed", false);
+            }
+        } else {
+            Log.appInfo("Connection change cancelled by user");
         }
     }
     
@@ -759,8 +852,30 @@ public class MainApplicationController {
     private void updateConnectionStatusOnStartup() {
         if (influxDBService != null && currentConfig != null) {
             updateConnectionStatus("Connected", true);
+            updateConnectionInfo();
         } else {
             updateConnectionStatus("Not connected", false);
+            updateConnectionInfo();
+        }
+    }
+    
+    /**
+     * Update connection info display (host and database)
+     */
+    private void updateConnectionInfo() {
+        if (connectionInfoLabel != null) {
+            if (currentConfig != null && currentConfig.isValid()) {
+                String host = currentConfig.getHost();
+                String database = currentConfig.getDatabase();
+                String apiType = currentConfig.getApiType() != null ? currentConfig.getApiType().toString() : "";
+                
+                String infoText = String.format("Host: %s | Database: %s | API: %s", host, database, apiType);
+                connectionInfoLabel.setText(infoText);
+                connectionInfoLabel.setTooltip(new Tooltip("Host: " + host + "\nDatabase: " + database + "\nAPI Type: " + apiType));
+            } else {
+                connectionInfoLabel.setText("Not connected");
+                connectionInfoLabel.setTooltip(new Tooltip("No active database connection"));
+            }
         }
     }
     

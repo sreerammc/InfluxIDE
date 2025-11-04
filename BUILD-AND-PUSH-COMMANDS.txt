@@ -104,7 +104,15 @@ git add pom.xml src/ run.bat *.md *.txt LICENSE
 git add -f InfluxDB-IDE-v2.0.0-Beta/
 
 # Commit and push
-git commit -m "Fix: SSL validation skip for all API types, strict API isolation, Flight SQL fixes"
+git commit -m "Feature: Connection management improvements and UI enhancements
+
+- Added 'Change Connection' menu option to switch connections without restart
+- Added connection info display (host, database, API) in status bar
+- Fixed 'Show Measurements' to use 'SHOW TABLES' for InfluxDB 3 Java API
+- Improved connection dialog with pre-populated configuration support
+- Fixed SSL validation skip for all API types
+- Strict API isolation (no fallbacks between API types)
+- Updated standalone distribution with all fixes"
 git push origin main
 
 

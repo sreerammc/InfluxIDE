@@ -68,6 +68,32 @@ public class ConnectionDialog {
         // Load saved settings
         config = settingsService.loadSettings();
         
+        return showDialogInternal();
+    }
+    
+    /**
+     * Show the connection dialog with a pre-populated configuration
+     * @param initialConfig The configuration to pre-populate the dialog with
+     * @return true if connection successful, false if cancelled
+     */
+    public boolean showDialog(ApplicationConfig initialConfig) {
+        Log.uiInfo("Connection dialog opened with pre-populated configuration");
+        
+        // Use provided config or fall back to saved settings
+        if (initialConfig != null && initialConfig.isValid()) {
+            config = initialConfig;
+        } else {
+            config = settingsService.loadSettings();
+        }
+        
+        return showDialogInternal();
+    }
+    
+    /**
+     * Internal method to show the dialog
+     * @return true if connection successful, false if cancelled
+     */
+    private boolean showDialogInternal() {
         // Create dialog stage
         Stage dialogStage = createDialogStage();
         
