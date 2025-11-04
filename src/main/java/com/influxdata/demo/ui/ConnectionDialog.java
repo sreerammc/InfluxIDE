@@ -478,7 +478,7 @@ public class ConnectionDialog {
                 boolean connected = influxService.testConnection();
                 
                 if (connected) {
-                    return "Connection test successful";
+                return "Connection test successful";
                 } else {
                     return "Error: Failed to connect to InfluxDB. Please check your connection details.";
                 }
@@ -551,17 +551,17 @@ public class ConnectionDialog {
                     updateStatus("Connection successful! Saving settings...", true);
                     
                     // Save settings only after successful connection test
-                    try {
-                        settingsService.saveSettings(config);
-                        Log.connectionInfo("Connection configuration saved successfully");
-                        connectionSuccessful = true;
-                        dialogStage.close();
-                    } catch (Exception e) {
-                        Log.connectionError("Failed to save connection settings: " + e.getMessage());
-                        Log.logException("connection", "Settings save error", e);
-                        updateStatus("Failed to save settings", false);
-                        showErrorDialog("Settings Error", "Failed to save settings: " + e.getMessage());
-                    }
+        try {
+            settingsService.saveSettings(config);
+            Log.connectionInfo("Connection configuration saved successfully");
+            connectionSuccessful = true;
+            dialogStage.close();
+        } catch (Exception e) {
+            Log.connectionError("Failed to save connection settings: " + e.getMessage());
+            Log.logException("connection", "Settings save error", e);
+            updateStatus("Failed to save settings", false);
+            showErrorDialog("Settings Error", "Failed to save settings: " + e.getMessage());
+        }
                 }
             });
         });

@@ -35,6 +35,13 @@ import javafx.scene.input.KeyCode;
 import javafx.scene.image.Image;
 import javafx.beans.property.SimpleStringProperty;
 import javafx.beans.property.SimpleObjectProperty;
+import javafx.scene.chart.LineChart;
+import javafx.scene.chart.NumberAxis;
+import javafx.scene.chart.CategoryAxis;
+import javafx.scene.chart.XYChart;
+import javafx.scene.layout.Priority;
+import javafx.scene.control.Separator;
+import javafx.geometry.Orientation;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -49,6 +56,18 @@ public class ResultsPanel {
     private TabPane resultsTabPane;
     private TableView<Map<String, Object>> resultsTable;
     private TextArea jsonTextArea;
+    private LineChart<String, Number> timeSeriesChart;
+    private VBox chartContainer;
+    private ComboBox<String> filterColumnCombo;
+    private ComboBox<String> filterOperatorCombo;
+    private TextField filterValueField;
+    private Button addFilterButton;
+    private ComboBox<String> filterConditionCombo;
+    private VBox activeFiltersBox;
+    private List<ChartFilter> chartFilters;
+    private VBox chartConfigurationBox;
+    private ComboBox<String> yAxisColumnCombo;
+    private ComboBox<String> seriesColumnCombo;
     private Label recordCountLabel;
     private TextField globalFilterField;
     private Button clearFiltersButton;
@@ -68,6 +87,7 @@ public class ResultsPanel {
     private String timestampFormat = "ISO_8601";
     
     public ResultsPanel() {
+        chartFilters = new ArrayList<>();
         initializeComponents();
         setupLayout();
         setupEventHandlers();
@@ -79,6 +99,151 @@ public class ResultsPanel {
      */
     public void setTimestampFormat(String format) {
         this.timestampFormat = format != null ? format : "ISO_8601";
+    }
+    
+    /**
+     * Create chart configuration panel
+     */
+    private HBox createChartConfigPanel() {
+        HBox configPanel = new HBox(15);
+        configPanel.setAlignment(Pos.CENTER_LEFT);
+        configPanel.setPadding(new Insets(10, 15, 10, 15));
+        configPanel.setStyle("-fx-background-color: #f8f9fa; -fx-border-color: #dee2e6; -fx-border-width: 0 0 1 0;");
+        
+        // Chart Configuration Section
+        Label chartLabel = new Label("Chart Configuration:");
+        chartLabel.setFont(Font.font("Arial", FontWeight.BOLD, 14));
+        chartLabel.setTextFill(Color.DARKBLUE);
+        
+        // Y-Axis column selection
+        Label yAxisLabel = new Label("Y-Axis:");
+        yAxisLabel.setFont(Font.font("Arial", FontWeight.BOLD, 12));
+        yAxisColumnCombo = new ComboBox<>();
+        yAxisColumnCombo.setPromptText("Select Y Column");
+        yAxisColumnCombo.setPrefWidth(120);
+        yAxisColumnCombo.setOnAction(e -> updateChartWithCurrentSettings());
+        
+        // Series column selection (for grouping)
+        Label seriesLabel = new Label("Group By:");
+        seriesLabel.setFont(Font.font("Arial", FontWeight.BOLD, 12));
+        seriesColumnCombo = new ComboBox<>();
+        seriesColumnCombo.setPromptText("Select Series Column");
+        seriesColumnCombo.setPrefWidth(140);
+        seriesColumnCombo.setOnAction(e -> updateChartWithCurrentSettings());
+        
+        // Chart filters section
+        Label filterLabel = new Label("Filters:");
+        filterLabel.setFont(Font.font("Arial", FontWeight.BOLD, 14));
+        filterLabel.setTextFill(Color.DARKGREEN);
+        
+        // Filter column selection
+        filterColumnCombo = new ComboBox<>();
+        filterColumnCombo.setPromptText("Column");
+        filterColumnCombo.setPrefWidth(100);
+        
+        // Filter operator selection
+        filterOperatorCombo = new ComboBox<>();
+        filterOperatorCombo.getItems().addAll("=", "!=", ">", ">=", "<", "<=", "contains", "starts with", "ends with", "is null", "is not null");
+        filterOperatorCombo.setValue("=");
+        filterOperatorCombo.setPrefWidth(80);
+        
+        // Filter value input
+        filterValueField = new TextField();
+        filterValueField.setPromptText("Value");
+        filterValueField.setPrefWidth(100);
+        filterValueField.setOnAction(e -> addChartFilter()); // Allow Enter key to add filter
+        
+        // Condition selection (AND/OR)
+        filterConditionCombo = new ComboBox<>();
+        filterConditionCombo.getItems().addAll("AND", "OR");
+        filterConditionCombo.setValue("AND");
+        filterConditionCombo.setPrefWidth(50);
+        filterConditionCombo.setVisible(false); // Initially hidden
+        
+        // Add filter button
+        addFilterButton = new Button("+");
+        addFilterButton.setStyle("-fx-background-color: #28a745; -fx-text-fill: white; -fx-font-weight: bold;");
+        addFilterButton.setPrefWidth(30);
+        addFilterButton.setOnAction(e -> addChartFilter());
+        
+        configPanel.getChildren().addAll(
+            chartLabel,
+            new Separator(Orientation.VERTICAL),
+            yAxisLabel, yAxisColumnCombo, seriesLabel, seriesColumnCombo,
+            new Separator(Orientation.VERTICAL),
+            filterLabel, filterColumnCombo, filterOperatorCombo, filterValueField, filterConditionCombo, addFilterButton
+        );
+        
+        return configPanel;
+    }
+    
+    /**
+     * Chart filter class with AND/OR condition support
+     */
+    private static class ChartFilter {
+        private final String column;
+        private final String operator;
+        private final String value;
+        private final String condition; // AND or OR
+        
+        public ChartFilter(String column, String operator, String value, String condition) {
+            this.column = column;
+            this.operator = operator;
+            this.value = value;
+            this.condition = condition;
+        }
+        
+        public String getColumn() { return column; }
+        public String getOperator() { return operator; }
+        public String getValue() { return value; }
+        public String getCondition() { return condition; }
+        
+        public boolean matches(Object cellValue) {
+            // Handle null checks first
+            if (operator.equals("is null")) {
+                return cellValue == null;
+            }
+            if (operator.equals("is not null")) {
+                return cellValue != null;
+            }
+            
+            if (cellValue == null) return false;
+            
+            String cellStr = cellValue.toString().toLowerCase();
+            String filterValue = value != null ? value.toLowerCase() : "";
+            
+            switch (operator) {
+                case "=": return cellStr.equals(filterValue);
+                case "!=": return !cellStr.equals(filterValue);
+                case ">": return compareNumeric(cellValue, value) > 0;
+                case ">=": return compareNumeric(cellValue, value) >= 0;
+                case "<": return compareNumeric(cellValue, value) < 0;
+                case "<=": return compareNumeric(cellValue, value) <= 0;
+                case "contains": return cellStr.contains(filterValue);
+                case "starts with": return cellStr.startsWith(filterValue);
+                case "ends with": return cellStr.endsWith(filterValue);
+                default: return true;
+            }
+        }
+        
+        private double compareNumeric(Object cellValue, String filterValue) {
+            try {
+                double cellNum = Double.parseDouble(cellValue.toString());
+                double filterNum = Double.parseDouble(filterValue);
+                return Double.compare(cellNum, filterNum);
+            } catch (NumberFormatException e) {
+                return cellValue.toString().compareTo(filterValue);
+            }
+        }
+        
+        @Override
+        public String toString() {
+            String filterStr = column + " " + operator;
+            if (!operator.equals("is null") && !operator.equals("is not null")) {
+                filterStr += " " + value;
+            }
+            return filterStr;
+        }
     }
     
     /**
@@ -97,7 +262,39 @@ public class ResultsPanel {
         jsonTextArea.setPromptText("JSON results will appear here...");
         jsonTextArea.setPrefRowCount(10);
         
-        // Tab pane for table and JSON views
+        // Time series chart
+        CategoryAxis xAxis = new CategoryAxis();
+        xAxis.setLabel("Time");
+        NumberAxis yAxis = new NumberAxis();
+        yAxis.setLabel("Value");
+        
+        timeSeriesChart = new LineChart<>(xAxis, yAxis);
+        timeSeriesChart.setTitle("Time Series Data");
+        timeSeriesChart.setCreateSymbols(true);
+        timeSeriesChart.setLegendVisible(true);
+        
+        // Chart configuration panel
+        HBox chartConfigPanel = createChartConfigPanel();
+        
+        // Active filters display
+        activeFiltersBox = new VBox(5);
+        activeFiltersBox.setPadding(new Insets(5));
+        activeFiltersBox.setStyle("-fx-background-color: #fff3cd; -fx-border-color: #ffeaa7; -fx-border-width: 1; -fx-border-radius: 3;");
+        activeFiltersBox.setVisible(false);
+        
+        // Chart configuration display
+        chartConfigurationBox = new VBox(5);
+        chartConfigurationBox.setPadding(new Insets(5));
+        chartConfigurationBox.setStyle("-fx-background-color: #e8f5e8; -fx-border-color: #4caf50; -fx-border-width: 1; -fx-border-radius: 3;");
+        chartConfigurationBox.setVisible(false);
+        
+        // Chart container with config panel, filters, configuration info, and chart
+        chartContainer = new VBox(10);
+        chartContainer.setPadding(new Insets(10));
+        chartContainer.getChildren().addAll(chartConfigPanel, activeFiltersBox, chartConfigurationBox, timeSeriesChart);
+        VBox.setVgrow(timeSeriesChart, Priority.ALWAYS);
+        
+        // Tab pane for table, JSON, and chart views
         resultsTabPane = new TabPane();
         
         Tab tableTab = new Tab("Table View", resultsTable);
@@ -106,7 +303,10 @@ public class ResultsPanel {
         Tab jsonTab = new Tab("JSON View", jsonTextArea);
         jsonTab.setClosable(false);
         
-        resultsTabPane.getTabs().addAll(tableTab, jsonTab);
+        Tab chartTab = new Tab("Chart View", chartContainer);
+        chartTab.setClosable(false);
+        
+        resultsTabPane.getTabs().addAll(tableTab, jsonTab, chartTab);
         
         // Record count label
         recordCountLabel = new Label("Records: 0");
@@ -362,6 +562,9 @@ public class ResultsPanel {
             // Add double-click functionality after data is loaded
             addDoubleClickFunctionality();
             
+            // Update chart with new data
+            displayChart(results);
+            
         } catch (Exception e) {
             showError("Failed to display results: " + e.getMessage());
         }
@@ -418,6 +621,7 @@ public class ResultsPanel {
         allData.clear();
         currentJsonData = null;
         jsonTextArea.clear();
+        clearChart();
         updateRecordCount(0);
         globalFilterField.clear();
         columnFilters.clear();
@@ -723,6 +927,638 @@ public class ResultsPanel {
         }
         
         updateRecordCount(tableData.size());
+    }
+    
+    /**
+     * Display chart data
+     */
+    public void displayChart(List<Map<String, Object>> results) {
+        if (results == null || results.isEmpty()) {
+            clearChart();
+            return;
+        }
+        
+        try {
+            System.out.println("ResultsPanel: Displaying chart for " + results.size() + " results");
+            
+            // Clear existing chart data
+            timeSeriesChart.getData().clear();
+            
+            // Populate column combos with all available columns
+            Set<String> allColumns = results.get(0).keySet();
+            updateColumnCombos(allColumns);
+            
+            // Auto-detect time column for X-axis
+            String timeColumn = detectTimeColumn(results.get(0));
+            if (timeColumn == null) {
+                timeSeriesChart.setTitle("No time column detected for X-axis");
+                return;
+            }
+            
+            // Get user-selected Y-axis and series columns
+            String yAxisColumn = yAxisColumnCombo.getValue();
+            String seriesColumn = seriesColumnCombo.getValue();
+            
+            if (yAxisColumn == null) {
+                timeSeriesChart.setTitle("Please select a Y-axis column");
+                updateChartConfiguration(timeColumn, null, null);
+                return;
+            }
+            
+            System.out.println("Chart: Time column (X-axis) = " + timeColumn);
+            System.out.println("Chart: Y-axis column = " + yAxisColumn);
+            System.out.println("Chart: Series column (Group By) = " + seriesColumn);
+            
+            // Apply chart filters first
+            List<Map<String, Object>> filteredData = applyChartFilters(results);
+            System.out.println("Chart: Filtered from " + results.size() + " to " + filteredData.size() + " rows");
+            
+            // Group data by series column (if selected)
+            if (seriesColumn != null && !seriesColumn.isEmpty()) {
+                createGroupedSeries(filteredData, timeColumn, yAxisColumn, seriesColumn);
+            } else {
+                createSingleSeries(filteredData, timeColumn, yAxisColumn);
+            }
+            
+            // Update chart title and configuration display
+            updateChartTitle(yAxisColumn, seriesColumn);
+            updateChartConfiguration(timeColumn, yAxisColumn, seriesColumn);
+            
+        } catch (Exception e) {
+            System.err.println("Failed to display chart: " + e.getMessage());
+            e.printStackTrace();
+            timeSeriesChart.setTitle("Chart Error: " + e.getMessage());
+        }
+    }
+    
+    /**
+     * Clear chart data
+     */
+    public void clearChart() {
+        if (timeSeriesChart != null) {
+            timeSeriesChart.getData().clear();
+            timeSeriesChart.setTitle("No Data");
+        }
+        // Clear chart filters and configuration when clearing chart
+        chartFilters.clear();
+        updateActiveFiltersDisplay();
+        updateChartConfiguration(null, null, null);
+        if (filterColumnCombo != null) {
+            filterColumnCombo.getItems().clear();
+        }
+        if (filterConditionCombo != null) {
+            filterConditionCombo.setVisible(false);
+        }
+        if (yAxisColumnCombo != null) {
+            yAxisColumnCombo.getItems().clear();
+        }
+        if (seriesColumnCombo != null) {
+            seriesColumnCombo.getItems().clear();
+        }
+    }
+    
+    /**
+     * Update column combos with available columns
+     */
+    private void updateColumnCombos(Set<String> allColumns) {
+        // Update filter column combo
+        if (filterColumnCombo != null) {
+            filterColumnCombo.getItems().clear();
+            filterColumnCombo.getItems().addAll(allColumns);
+        }
+        
+        // Update Y-axis column combo
+        if (yAxisColumnCombo != null) {
+            String currentSelection = yAxisColumnCombo.getValue();
+            yAxisColumnCombo.getItems().clear();
+            yAxisColumnCombo.getItems().addAll(allColumns);
+            // Restore selection if still valid
+            if (currentSelection != null && allColumns.contains(currentSelection)) {
+                yAxisColumnCombo.setValue(currentSelection);
+            }
+        }
+        
+        // Update series column combo
+        if (seriesColumnCombo != null) {
+            String currentSelection = seriesColumnCombo.getValue();
+            seriesColumnCombo.getItems().clear();
+            seriesColumnCombo.getItems().add(""); // Option for no grouping
+            seriesColumnCombo.getItems().addAll(allColumns);
+            // Restore selection if still valid
+            if (currentSelection != null && (currentSelection.isEmpty() || allColumns.contains(currentSelection))) {
+                seriesColumnCombo.setValue(currentSelection);
+            }
+        }
+    }
+    
+    /**
+     * Create grouped series based on series column values
+     */
+    private void createGroupedSeries(List<Map<String, Object>> data, String timeColumn, String yAxisColumn, String seriesColumn) {
+        // Group data by series column values
+        Map<String, List<Map<String, Object>>> groupedData = data.stream()
+            .collect(Collectors.groupingBy(row -> {
+                Object seriesValue = row.get(seriesColumn);
+                return seriesValue != null ? seriesValue.toString() : "null";
+            }));
+        
+        System.out.println("Chart: Created " + groupedData.size() + " series groups");
+        
+        // Create a series for each group
+        for (Map.Entry<String, List<Map<String, Object>>> group : groupedData.entrySet()) {
+            String seriesName = group.getKey();
+            List<Map<String, Object>> seriesData = group.getValue();
+            
+            XYChart.Series<String, Number> series = new XYChart.Series<>();
+            series.setName(seriesName);
+            
+            // Add data points to series
+            for (Map<String, Object> row : seriesData) {
+                Object timeValue = row.get(timeColumn);
+                Object yValue = row.get(yAxisColumn);
+                
+                if (timeValue != null && yValue != null) {
+                    String timeStr = formatTimeForChart(timeValue);
+                    Number yNumber = convertToNumber(yValue);
+                    
+                    if (yNumber != null) {
+                        series.getData().add(new XYChart.Data<>(timeStr, yNumber));
+                    }
+                }
+            }
+            
+            // Sort data points by time
+            series.getData().sort((a, b) -> a.getXValue().compareTo(b.getXValue()));
+            
+            timeSeriesChart.getData().add(series);
+            System.out.println("Chart: Added series '" + seriesName + "' with " + series.getData().size() + " points");
+        }
+    }
+    
+    /**
+     * Create single series (no grouping)
+     */
+    private void createSingleSeries(List<Map<String, Object>> data, String timeColumn, String yAxisColumn) {
+        XYChart.Series<String, Number> series = new XYChart.Series<>();
+        series.setName(yAxisColumn);
+        
+        // Add data points to series
+        for (Map<String, Object> row : data) {
+            Object timeValue = row.get(timeColumn);
+            Object yValue = row.get(yAxisColumn);
+            
+            if (timeValue != null && yValue != null) {
+                String timeStr = formatTimeForChart(timeValue);
+                Number yNumber = convertToNumber(yValue);
+                
+                if (yNumber != null) {
+                    series.getData().add(new XYChart.Data<>(timeStr, yNumber));
+                }
+            }
+        }
+        
+        // Sort data points by time
+        series.getData().sort((a, b) -> a.getXValue().compareTo(b.getXValue()));
+        
+        timeSeriesChart.getData().add(series);
+        System.out.println("Chart: Added single series with " + series.getData().size() + " points");
+    }
+    
+    /**
+     * Convert value to Number for plotting
+     */
+    private Number convertToNumber(Object value) {
+        if (value == null) return null;
+        
+        if (value instanceof Number) {
+            return (Number) value;
+        }
+        
+        try {
+            // Try to parse as double
+            return Double.parseDouble(value.toString());
+        } catch (NumberFormatException e) {
+            // For non-numeric values, we could assign ordinal values or skip
+            // For now, let's skip non-numeric values
+            return null;
+        }
+    }
+    
+    /**
+     * Update chart title based on configuration
+     */
+    private void updateChartTitle(String yAxisColumn, String seriesColumn) {
+        StringBuilder title = new StringBuilder();
+        
+        if (yAxisColumn != null) {
+            title.append(yAxisColumn);
+            if (seriesColumn != null && !seriesColumn.isEmpty()) {
+                title.append(" (Grouped by ").append(seriesColumn).append(")");
+            }
+        } else {
+            title.append("Chart");
+        }
+        
+        if (!chartFilters.isEmpty()) {
+            title.append(" [").append(chartFilters.size()).append(" filter").append(chartFilters.size() > 1 ? "s" : "").append("]");
+        }
+        
+        timeSeriesChart.setTitle(title.toString());
+    }
+    
+    /**
+     * Update chart configuration display
+     */
+    private void updateChartConfiguration(String timeColumn, String yAxisColumn, String seriesColumn) {
+        chartConfigurationBox.getChildren().clear();
+        
+        if (timeColumn == null && yAxisColumn == null && seriesColumn == null) {
+            chartConfigurationBox.setVisible(false);
+            return;
+        }
+        
+        chartConfigurationBox.setVisible(true);
+        
+        // Configuration title
+        Label configTitle = new Label("Current Chart Configuration:");
+        configTitle.setFont(Font.font("Arial", FontWeight.BOLD, 11));
+        chartConfigurationBox.getChildren().add(configTitle);
+        
+        // Configuration details
+        VBox detailsBox = new VBox(2);
+        if (timeColumn != null) {
+            Label timeLabel = new Label("X-Axis (Time): " + timeColumn);
+            timeLabel.setFont(Font.font("Arial", 10));
+            detailsBox.getChildren().add(timeLabel);
+        }
+        if (yAxisColumn != null) {
+            Label yLabel = new Label("Y-Axis: " + yAxisColumn);
+            yLabel.setFont(Font.font("Arial", 10));
+            detailsBox.getChildren().add(yLabel);
+        }
+        if (seriesColumn != null && !seriesColumn.isEmpty()) {
+            Label seriesLabel = new Label("Group By: " + seriesColumn);
+            seriesLabel.setFont(Font.font("Arial", 10));
+            detailsBox.getChildren().add(seriesLabel);
+        }
+        
+        chartConfigurationBox.getChildren().add(detailsBox);
+    }
+    
+    /**
+     * Detect time column from data
+     */
+    private String detectTimeColumn(Map<String, Object> sampleRow) {
+        if (sampleRow == null) return null;
+        
+        // Check for common time column names
+        String[] timeColumnNames = {"_time", "time", "timestamp", "date", "datetime"};
+        
+        for (String columnName : timeColumnNames) {
+            if (sampleRow.containsKey(columnName)) {
+                return columnName;
+            }
+        }
+        
+        // Check for columns that contain time-like data
+        for (Map.Entry<String, Object> entry : sampleRow.entrySet()) {
+            String columnName = entry.getKey().toLowerCase();
+            if (columnName.contains("time") || columnName.contains("date")) {
+                return entry.getKey();
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Detect numeric columns from data
+     */
+    private List<String> detectNumericColumns(Map<String, Object> sampleRow) {
+        List<String> numericColumns = new ArrayList<>();
+        
+        if (sampleRow == null) return numericColumns;
+        
+        for (Map.Entry<String, Object> entry : sampleRow.entrySet()) {
+            String columnName = entry.getKey();
+            Object value = entry.getValue();
+            
+            // Skip time columns and non-numeric data
+            if (isTimestampColumn(columnName)) continue;
+            
+            if (isNumericValue(value)) {
+                numericColumns.add(columnName);
+            }
+        }
+        
+        return numericColumns;
+    }
+    
+    /**
+     * Check if a value is numeric
+     */
+    private boolean isNumericValue(Object value) {
+        if (value == null) return false;
+        
+        if (value instanceof Number) {
+            return true;
+        }
+        
+        if (value instanceof String) {
+            try {
+                Double.parseDouble((String) value);
+                return true;
+            } catch (NumberFormatException e) {
+                return false;
+            }
+        }
+        
+        return false;
+    }
+    
+    /**
+     * Parse numeric value from object
+     */
+    private Number parseNumericValue(Object value) {
+        if (value == null) return null;
+        
+        if (value instanceof Number) {
+            return (Number) value;
+        }
+        
+        if (value instanceof String) {
+            try {
+                return Double.parseDouble((String) value);
+            } catch (NumberFormatException e) {
+                return null;
+            }
+        }
+        
+        return null;
+    }
+    
+    /**
+     * Format time value for chart display
+     */
+    private String formatTimeForChart(Object timeValue) {
+        if (timeValue == null) return "";
+        
+        String timeStr = timeValue.toString();
+        
+        // For ISO 8601 timestamps, show just time part if it's the same date
+        if (timeStr.contains("T")) {
+            String[] parts = timeStr.split("T");
+            if (parts.length > 1) {
+                String timePart = parts[1];
+                if (timePart.contains(".")) {
+                    timePart = timePart.substring(0, timePart.indexOf("."));
+                }
+                if (timePart.endsWith("Z")) {
+                    timePart = timePart.substring(0, timePart.length() - 1);
+                }
+                return timePart;
+            }
+        }
+        
+        return timeStr;
+    }
+    
+    /**
+     * Update chart with current settings
+     */
+    private void updateChartWithCurrentSettings() {
+        if (allData != null && !allData.isEmpty()) {
+            displayChart(new ArrayList<>(allData));
+        }
+    }
+    
+    /**
+     * Add chart filter
+     */
+    private void addChartFilter() {
+        String column = filterColumnCombo.getValue();
+        String operator = filterOperatorCombo.getValue();
+        String value = filterValueField.getText().trim();
+        
+        // Validation
+        if (column == null || column.isEmpty()) {
+            showFilterError("Please select a column for the filter.");
+            return;
+        }
+        
+        // Value is not required for "is null" and "is not null" operators
+        if (!operator.equals("is null") && !operator.equals("is not null") && value.isEmpty()) {
+            showFilterError("Please enter a value for the filter.");
+            return;
+        }
+        
+        // Get condition (AND/OR) - default to AND for first filter
+        String condition = chartFilters.isEmpty() ? "AND" : filterConditionCombo.getValue();
+        
+        ChartFilter filter = new ChartFilter(column, operator, value, condition);
+        chartFilters.add(filter);
+        
+        // Show condition combo for next filter
+        filterConditionCombo.setVisible(true);
+        
+        // Clear input fields
+        filterColumnCombo.setValue(null);
+        filterValueField.clear();
+        
+        // Update active filters display
+        updateActiveFiltersDisplay();
+        
+        // Refresh chart with filters
+        updateChartWithCurrentSettings();
+    }
+    
+    /**
+     * Show filter error message
+     */
+    private void showFilterError(String message) {
+        Alert alert = new Alert(Alert.AlertType.WARNING);
+        alert.setTitle("Invalid Filter");
+        alert.setHeaderText(null);
+        alert.setContentText(message);
+        alert.showAndWait();
+    }
+    
+    /**
+     * Remove chart filter
+     */
+    private void removeChartFilter(ChartFilter filter) {
+        chartFilters.remove(filter);
+        
+        // Hide condition combo if no filters remain
+        if (chartFilters.isEmpty()) {
+            filterConditionCombo.setVisible(false);
+        }
+        
+        updateActiveFiltersDisplay();
+        updateChartWithCurrentSettings();
+    }
+    
+    /**
+     * Update active filters display
+     */
+    private void updateActiveFiltersDisplay() {
+        activeFiltersBox.getChildren().clear();
+        
+        if (chartFilters.isEmpty()) {
+            activeFiltersBox.setVisible(false);
+            return;
+        }
+        
+        activeFiltersBox.setVisible(true);
+        
+        // Title
+        Label filtersTitle = new Label("Active Filters:");
+        filtersTitle.setFont(Font.font("Arial", FontWeight.BOLD, 11));
+        activeFiltersBox.getChildren().add(filtersTitle);
+        
+        // Filter chips with conditions
+        HBox filtersRow = new HBox(5);
+        for (int i = 0; i < chartFilters.size(); i++) {
+            ChartFilter filter = chartFilters.get(i);
+            
+            // Add condition label (AND/OR) before filter (except for first filter)
+            if (i > 0) {
+                Label conditionLabel = new Label(filter.getCondition());
+                conditionLabel.setFont(Font.font("Arial", FontWeight.BOLD, 10));
+                conditionLabel.setTextFill(filter.getCondition().equals("OR") ? Color.ORANGE : Color.DARKGREEN);
+                conditionLabel.setPadding(new Insets(0, 5, 0, 5));
+                filtersRow.getChildren().add(conditionLabel);
+            }
+            
+            HBox filterChip = createFilterChip(filter);
+            filtersRow.getChildren().add(filterChip);
+        }
+        
+        // Clear all filters button
+        if (!chartFilters.isEmpty()) {
+            Button clearAllButton = new Button("Clear All");
+            clearAllButton.setStyle("-fx-background-color: #dc3545; -fx-text-fill: white; -fx-font-size: 10px;");
+            clearAllButton.setOnAction(e -> clearAllChartFilters());
+            filtersRow.getChildren().add(clearAllButton);
+        }
+        
+        activeFiltersBox.getChildren().add(filtersRow);
+    }
+    
+    /**
+     * Create filter chip UI element
+     */
+    private HBox createFilterChip(ChartFilter filter) {
+        HBox chip = new HBox(5);
+        chip.setAlignment(Pos.CENTER);
+        chip.setPadding(new Insets(2, 8, 2, 8));
+        chip.setStyle("-fx-background-color: #007bff; -fx-background-radius: 12; -fx-text-fill: white;");
+        
+        Label filterLabel = new Label(filter.toString());
+        filterLabel.setFont(Font.font("Arial", 10));
+        filterLabel.setTextFill(Color.WHITE);
+        
+        Button removeButton = new Button("×");
+        removeButton.setStyle("-fx-background-color: transparent; -fx-text-fill: white; -fx-font-size: 12px; -fx-padding: 0;");
+        removeButton.setOnAction(e -> removeChartFilter(filter));
+        
+        chip.getChildren().addAll(filterLabel, removeButton);
+        return chip;
+    }
+    
+    /**
+     * Clear all chart filters
+     */
+    private void clearAllChartFilters() {
+        chartFilters.clear();
+        filterConditionCombo.setVisible(false);
+        updateActiveFiltersDisplay();
+        updateChartWithCurrentSettings();
+    }
+    
+    /**
+     * Apply chart filters to data with AND/OR logic
+     */
+    private List<Map<String, Object>> applyChartFilters(List<Map<String, Object>> data) {
+        if (chartFilters.isEmpty()) {
+            return data;
+        }
+        
+        return data.stream()
+            .filter(row -> evaluateFiltersForRow(row))
+            .collect(Collectors.toList());
+    }
+    
+    /**
+     * Evaluate all filters for a single row using AND/OR logic
+     */
+    private boolean evaluateFiltersForRow(Map<String, Object> row) {
+        if (chartFilters.isEmpty()) {
+            return true;
+        }
+        
+        // Start with first filter result
+        ChartFilter firstFilter = chartFilters.get(0);
+        boolean result = firstFilter.matches(row.get(firstFilter.getColumn()));
+        
+        // Apply remaining filters with their conditions
+        for (int i = 1; i < chartFilters.size(); i++) {
+            ChartFilter filter = chartFilters.get(i);
+            boolean filterResult = filter.matches(row.get(filter.getColumn()));
+            
+            if (filter.getCondition().equals("OR")) {
+                result = result || filterResult;
+            } else { // AND
+                result = result && filterResult;
+            }
+        }
+        
+        return result;
+    }
+    
+    
+    /**
+     * Parse timestamp to milliseconds
+     */
+    private long parseTimestampToMs(Object timeValue) {
+        try {
+            if (timeValue instanceof Long) {
+                return (Long) timeValue;
+            } else if (timeValue instanceof String) {
+                String str = (String) timeValue;
+                // Try parsing as ISO 8601
+                return java.time.Instant.parse(str).toEpochMilli();
+            }
+        } catch (Exception e) {
+            // Fallback to current time
+        }
+        return System.currentTimeMillis();
+    }
+    
+    /**
+     * Aggregate values based on method
+     */
+    private Number aggregateValues(List<Number> values, String method) {
+        if (values.isEmpty()) return 0;
+        
+        switch (method) {
+            case "Average":
+                return values.stream().mapToDouble(Number::doubleValue).average().orElse(0.0);
+            case "Sum":
+                return values.stream().mapToDouble(Number::doubleValue).sum();
+            case "Min":
+                return values.stream().mapToDouble(Number::doubleValue).min().orElse(0.0);
+            case "Max":
+                return values.stream().mapToDouble(Number::doubleValue).max().orElse(0.0);
+            case "Count":
+                return values.size();
+            case "First":
+                return values.get(0);
+            case "Last":
+                return values.get(values.size() - 1);
+            default:
+                return values.stream().mapToDouble(Number::doubleValue).average().orElse(0.0);
+        }
     }
     
     /**

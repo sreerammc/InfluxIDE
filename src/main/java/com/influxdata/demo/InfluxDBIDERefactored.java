@@ -119,14 +119,23 @@ public class InfluxDBIDERefactored extends Application {
     
     /**
      * Check if Apache Arrow JVM arguments are set
+     * According to Apache Arrow documentation: https://arrow.apache.org/docs/java/flight_sql_jdbc_driver.html
      */
     private static void checkApacheArrowJVMArgs() {
+        // Check if the required JVM argument is set
+        // This check may not be 100% reliable when run via Maven, but serves as a reminder
         String vmArgs = System.getProperty("sun.java.command", "");
-        if (!vmArgs.contains("--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED")) {
+        String javaToolOptions = System.getenv("JAVA_TOOL_OPTIONS");
+        String javaOptions = javaToolOptions != null ? javaToolOptions : "";
+        String allArgs = vmArgs + " " + javaOptions;
+        
+        if (!allArgs.contains("--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED") &&
+            !allArgs.contains("--add-opens java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED")) {
             System.err.println("WARNING: Apache Arrow JVM arguments not detected.");
             System.err.println("For Flight SQL support, ensure the following JVM arguments are set:");
             System.err.println("--add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED");
-            System.err.println("--add-opens=java.base/java.nio=org.apache.arrow.memory,ALL-UNNAMED");
+            System.err.println("--add-opens=java.base/java.nio=ALL-UNNAMED");
+            System.err.println("See: https://arrow.apache.org/docs/java/flight_sql_jdbc_driver.html");
         }
     }
 } 

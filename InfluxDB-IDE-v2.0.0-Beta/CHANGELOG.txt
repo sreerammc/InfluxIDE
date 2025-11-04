@@ -1,0 +1,67 @@
+========================================
+InfluxDB IDE v2.0.0 - Standalone Distribution
+========================================
+
+Latest Updates:
+---------------
+
+✅ SSL Validation Skip Fix
+   - Now works for all three API types:
+     * Flight SQL: Uses disableCertificateVerification=true parameter
+     * InfluxDB 3 Java API: Uses /api/v3/query_sql endpoint with Bearer token
+     * REST API: Uses global SSL validation skip
+
+✅ Strict API Isolation
+   - Removed all fallback mechanisms between API types
+   - Each API type fails independently without trying others
+   - Better error messages specific to each API type
+
+✅ Flight SQL Improvements
+   - Fixed JDBC URL format: jdbc:arrow-flight-sql:// (was jdbc:arrow-flight://)
+   - Proper JVM arguments for Apache Arrow memory access
+   - Enhanced error logging for debugging
+
+✅ InfluxDB 3 Java API Implementation
+   - Proper implementation using /api/v3/query_sql endpoint
+   - Uses Bearer token authentication (matches curl command format)
+   - GET requests with URL-encoded parameters
+
+Features:
+---------
+- Support for Flight SQL, InfluxDB 3 Java API, and REST API
+- SSL validation skip option for self-signed certificates
+- Modern JavaFX UI with professional design
+- Comprehensive logging system
+- Query result formatting and export
+
+System Requirements:
+-------------------
+- Java 11 or higher
+- JavaFX 24.0.2 (included in distribution)
+
+How to Run:
+----------
+1. Double-click InfluxDB-IDE.bat
+2. Or run from command line:
+   cd InfluxDB-IDE-v2.0.0-Beta
+   InfluxDB-IDE.bat
+
+Connection Settings:
+-------------------
+- Host: your-server:port (e.g., 20.90.176.154:8181)
+- Database: your database name
+- Token: your API token
+- Protocol: HTTP or HTTPS
+- API Type: Flight SQL, InfluxDB 3 Java API, or REST API
+- Skip SSL validation: Check for self-signed certificates
+
+Known Issues:
+------------
+- Flight SQL requires JVM arguments (already included in launcher)
+- Memory leak warnings may appear if Flight SQL connections fail (non-critical)
+
+For Support:
+-----------
+- Check application logs in the logs directory
+- Review connection settings match your InfluxDB server
+- Ensure Flight SQL is enabled on InfluxDB 3 server

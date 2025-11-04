@@ -37,13 +37,25 @@ if exist "javafx-sdk\lib\javafx.controls.jar" (
 )
 echo.
 
-echo Starting InfluxDB IDE with JavaFX...
+echo Starting InfluxDB IDE with JavaFX and Flight SQL support...
 if defined JAVAFX_PATH (
     echo Running with JavaFX module path: %JAVAFX_PATH%
-    java --module-path "%JAVAFX_PATH%" --add-modules javafx.controls,javafx.fxml,javafx.web --add-opens java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED -Xmx2g -XX:+UseG1GC -Darrow.memory.debug.allocator=false -Darrow.memory.debug.leak=true -Darrow.memory.debug.allocator.max_records=0 -jar influx-simple-2.0.0.jar
+    java --module-path "%JAVAFX_PATH%" ^
+         --add-modules javafx.controls,javafx.fxml ^
+         --add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED ^
+         --add-opens=java.base/java.nio=ALL-UNNAMED ^
+         --add-opens=javafx.graphics/javafx.scene=ALL-UNNAMED ^
+         -Xmx2g ^
+         -XX:+UseG1GC ^
+         -jar influx-simple-2.0.0.jar
 ) else (
     echo Running without JavaFX module path
-    java --add-opens java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED -Xmx2g -XX:+UseG1GC -Darrow.memory.debug.allocator=false -Darrow.memory.debug.leak=true -Darrow.memory.debug.allocator.max_records=0 -jar influx-simple-2.0.0.jar
+    java --add-opens=java.base/java.nio=org.apache.arrow.memory.core,ALL-UNNAMED ^
+         --add-opens=java.base/java.nio=ALL-UNNAMED ^
+         --add-opens=javafx.graphics/javafx.scene=ALL-UNNAMED ^
+         -Xmx2g ^
+         -XX:+UseG1GC ^
+         -jar influx-simple-2.0.0.jar
 )
 
 if %errorlevel% neq 0 (

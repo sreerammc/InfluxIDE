@@ -1,0 +1,122 @@
+========================================
+Commands to Clean, Build, and Push to Git
+========================================
+
+STEP 1: Clean up unwanted files
+--------------------------------
+# Remove build artifacts (will be regenerated)
+rmdir /s /q target
+
+# Remove JavaFX SDK from root (it's in standalone distribution)
+rmdir /s /q javafx-sdk
+
+# Note: dependency-reduced-pom.xml is in .gitignore, so it's already ignored
+
+
+STEP 2: Build the project
+--------------------------
+# Clean and build with all dependencies
+mvn clean package -DskipTests
+
+
+STEP 3: Update standalone distribution
+--------------------------------------
+# Copy new JAR to standalone distribution (PowerShell)
+Copy-Item -Path target\influx-simple-2.0.0.jar -Destination InfluxDB-IDE-v2.0.0-Beta\influx-simple-2.0.0.jar -Force
+
+# Or if using CMD:
+# copy /Y target\influx-simple-2.0.0.jar InfluxDB-IDE-v2.0.0-Beta\influx-simple-2.0.0.jar
+
+
+STEP 4: Update .gitignore to include standalone distribution
+------------------------------------------------------------
+# The standalone distribution is currently ignored, we need to force add it
+# First, let's check current .gitignore
+type .gitignore | findstr "InfluxDB-IDE"
+
+# If you want to include standalone distribution, you can either:
+# Option A: Force add it (recommended)
+# Option B: Remove it from .gitignore (but this will include all InfluxDB-IDE-v* folders)
+
+
+STEP 5: Check git status
+------------------------
+# See what files have changed
+git status
+
+
+STEP 6: Add all changes (including standalone distribution)
+-----------------------------------------------------------
+# Add source code and configuration files
+git add pom.xml
+git add src/
+git add run.bat
+git add *.md
+git add *.txt
+git add LICENSE
+
+# Force add standalone distribution (it's in .gitignore)
+git add -f InfluxDB-IDE-v2.0.0-Beta/
+
+# Or add everything (will skip .gitignore items except what we force added)
+# git add .
+
+
+STEP 7: Commit changes
+----------------------
+# Commit with a descriptive message
+git commit -m "Fix: SSL validation skip for all API types, strict API isolation, Flight SQL fixes
+
+- Fixed SSL validation skip for Flight SQL (disableCertificateVerification parameter)
+- Fixed SSL validation skip for InfluxDB 3 Java API (/api/v3/query_sql endpoint)
+- Removed API fallback mechanisms for strict isolation
+- Fixed Flight SQL JDBC URL format (jdbc:arrow-flight-sql://)
+- Updated InfluxDB 3 Java API to use Bearer token authentication
+- Restored working pom.xml configuration
+- Updated standalone distribution with latest fixes"
+
+
+STEP 8: Push to GitHub
+-----------------------
+# Push to main branch
+git push origin main
+
+# Or if you need to set upstream:
+# git push -u origin main
+
+
+========================================
+ALL COMMANDS IN ONE BLOCK (Copy & Paste)
+========================================
+
+# Clean up (PowerShell)
+Remove-Item -Path target -Recurse -Force -ErrorAction SilentlyContinue
+Remove-Item -Path javafx-sdk -Recurse -Force -ErrorAction SilentlyContinue
+
+# Build
+mvn clean package -DskipTests
+
+# Update standalone (PowerShell)
+Copy-Item -Path target\influx-simple-2.0.0.jar -Destination InfluxDB-IDE-v2.0.0-Beta\influx-simple-2.0.0.jar -Force
+
+# Add to git
+git add pom.xml src/ run.bat *.md *.txt LICENSE
+git add -f InfluxDB-IDE-v2.0.0-Beta/
+
+# Commit and push
+git commit -m "Fix: SSL validation skip for all API types, strict API isolation, Flight SQL fixes"
+git push origin main
+
+
+========================================
+ALTERNATIVE: CMD Commands (if not using PowerShell)
+========================================
+
+rmdir /s /q target 2>nul
+rmdir /s /q javafx-sdk 2>nul
+mvn clean package -DskipTests
+xcopy /Y target\influx-simple-2.0.0.jar InfluxDB-IDE-v2.0.0-Beta\ 2>nul
+git add pom.xml src/ run.bat *.md *.txt LICENSE
+git add -f InfluxDB-IDE-v2.0.0-Beta/
+git commit -m "Fix: SSL validation skip for all API types, strict API isolation, Flight SQL fixes"
+git push origin main

@@ -28,6 +28,10 @@ import javax.net.ssl.*;
 import java.security.cert.X509Certificate;
 import java.security.SecureRandom;
 
+// Note: Using JDBC approach for Flight SQL (not direct Flight SQL client API)
+// The JDBC driver internally handles Flight SQL protocol communication
+// See: https://docs.influxdata.com/influxdb3/core/reference/client-libraries/flight/java-flightsql/
+
 /**
  * Service for InfluxDB operations
  * Handles connection testing, query execution, and data retrieval
@@ -42,11 +46,35 @@ public class InfluxDBService {
         this.timezoneService = new TimezoneService();
         
         // Load Flight SQL JDBC driver
-        try {
-            Class.forName("org.apache.arrow.flight.sql.jdbc.FlightSqlDriver");
-            Log.connectionInfo("Flight SQL JDBC driver loaded successfully");
+        // According to Apache Arrow documentation: https://arrow.apache.org/docs/java/flight_sql_jdbc_driver.html
+        // The driver class is automatically loaded via ServiceLoader, but we can also load it explicitly
+        String[] driverClassNames = {
+            "org.apache.arrow.driver.jdbc.ArrowFlightJdbcDriver",  // Arrow Flight SQL JDBC Driver
+            "org.apache.arrow.flight.sql.jdbc.FlightSqlDriver",     // Alternative class name
+            "org.apache.arrow.flight.jdbc.FlightJdbcDriver"         // Legacy class name
+        };
+        
+        boolean driverLoaded = false;
+        for (String driverClassName : driverClassNames) {
+            try {
+                Class<?> driverClass = Class.forName(driverClassName);
+                // Explicitly register the driver
+                Driver driver = (Driver) driverClass.getDeclaredConstructor().newInstance();
+                DriverManager.registerDriver(driver);
+                Log.connectionInfo("Flight SQL JDBC driver loaded and registered successfully: " + driverClassName);
+                driverLoaded = true;
+                break;
         } catch (ClassNotFoundException e) {
-            Log.connectionWarning("Flight SQL JDBC driver not found: " + e.getMessage());
+                // Try next driver class name
+                continue;
+            } catch (Exception e) {
+                Log.connectionWarning("Failed to load driver " + driverClassName + ": " + e.getMessage());
+            }
+        }
+        
+        if (!driverLoaded) {
+            Log.connectionWarning("Flight SQL JDBC driver not found. Tried: " + String.join(", ", driverClassNames));
+            Log.connectionWarning("Please ensure flight-sql-jdbc-driver is in the classpath and JVM arguments are set.");
         }
     }
     
@@ -102,6 +130,11 @@ public class InfluxDBService {
         long startTime = System.currentTimeMillis();
         Log.queryInfo("Executing query using " + config.getApiType() + ": " + query.substring(0, Math.min(query.length(), 100)) + (query.length() > 100 ? "..." : ""));
         
+        // Configure SSL validation skip if needed
+        if (config.isSkipSSLValidation() && config.getProtocol() == Protocol.HTTPS) {
+            configureSSLValidationSkip();
+        }
+        
         try {
             String result = null;
             switch (config.getApiType()) {
@@ -155,9 +188,8 @@ public class InfluxDBService {
             String result = executeFlightSQLQuery(testQuery);
             return result != null && !result.contains("error");
         } catch (Exception e) {
-            // Try fallback to REST API
-            System.out.println("Flight SQL connection failed, trying REST API fallback: " + e.getMessage());
-            return testRESTConnection();
+            Log.connectionError("Flight SQL connection test failed: " + e.getMessage());
+            throw new ConnectionException("Flight SQL connection test failed", e);
         }
     }
     
@@ -171,9 +203,8 @@ public class InfluxDBService {
             String result = executeInfluxDB3Query(testQuery);
             return result != null && !result.contains("error");
         } catch (Exception e) {
-            // Try fallback to REST API
-            System.out.println("InfluxDB 3 API connection failed, trying REST API fallback: " + e.getMessage());
-            return testRESTConnection();
+            Log.connectionError("InfluxDB 3 Java API connection test failed: " + e.getMessage());
+            throw new ConnectionException("InfluxDB 3 Java API connection test failed", e);
         }
     }
     
@@ -188,46 +219,53 @@ public class InfluxDBService {
     
     /**
      * Execute Flight SQL query
+     * According to Apache Arrow docs: https://arrow.apache.org/docs/java/flight_sql_jdbc_driver.html
+     * JDBC URL format is: jdbc:arrow-flight-sql://HOSTNAME:PORT (no endpoint paths)
      */
     private String executeFlightSQLQuery(String query) throws Exception {
-        // Try multiple Flight SQL endpoints
-        String[] endpoints = {"/flight", "/arrow-flight", ""};
-        
-        for (String endpoint : endpoints) {
-            try {
-                return executeFlightSQLQueryWithEndpoint(query, endpoint);
-            } catch (Exception e) {
-                System.out.println("Flight SQL endpoint " + endpoint + " failed: " + e.getMessage());
-                if (endpoint.equals("")) {
-                    // Last endpoint failed, throw exception
-                    throw e;
-                }
-            }
-        }
-        
-        throw new QueryExecutionException("All Flight SQL endpoints failed");
-    }
-    
-    /**
-     * Execute Flight SQL query with specific endpoint
-     */
-    private String executeFlightSQLQueryWithEndpoint(String query, String endpoint) throws Exception {
         // Translate query if needed
         String translatedQuery = translateQueryForFlightSQL(query);
         
-        // Build JDBC URL
-        String jdbcUrl = buildFlightSQLJDBCUrl(endpoint);
+        // Build JDBC URL (format: jdbc:arrow-flight-sql://HOSTNAME:PORT)
+        String jdbcUrl = buildFlightSQLJDBCUrl();
+        Log.connectionInfo("Attempting Flight SQL connection with URL: " + jdbcUrl);
         
-        try (Connection connection = DriverManager.getConnection(jdbcUrl, "token", config.getToken())) {
+        // Check if a driver is available for this URL
+        try {
+            Driver driver = DriverManager.getDriver(jdbcUrl);
+            Log.connectionInfo("Driver found for URL: " + driver.getClass().getName());
+        } catch (SQLException e) {
+            Log.connectionError("No driver found for URL: " + jdbcUrl);
+            Log.connectionError("Available drivers: " + getAvailableDrivers());
+            throw new QueryExecutionException("No suitable driver found for Flight SQL. " +
+                "Please ensure the Arrow Flight SQL JDBC driver is loaded and JVM arguments are set. " +
+                "Error: " + e.getMessage());
+        }
+        
+        // According to Apache Arrow docs, token can be passed via Properties or URL parameter
+        // Using Properties is cleaner and avoids URL encoding issues
+        java.util.Properties props = new java.util.Properties();
+        props.setProperty("token", config.getToken());
+        
+        try (Connection connection = DriverManager.getConnection(jdbcUrl, props)) {
+            Log.connectionInfo("Flight SQL connection established successfully");
+            
             connection.setNetworkTimeout(Executors.newSingleThreadExecutor(), config.getQueryTimeout().getMilliseconds());
             
             try (Statement statement = connection.createStatement()) {
                 statement.setQueryTimeout((int) TimeUnit.MILLISECONDS.toSeconds(config.getQueryTimeout().getMilliseconds()));
                 
                 try (ResultSet resultSet = statement.executeQuery(translatedQuery)) {
-                    return convertResultSetToJSON(resultSet);
+                    String result = convertResultSetToJSON(resultSet);
+                    Log.queryInfo("Flight SQL query executed successfully");
+                    return result;
                 }
             }
+        } catch (SQLException e) {
+            Log.connectionError("Flight SQL connection failed: " + e.getMessage());
+            Log.connectionError("SQL State: " + e.getSQLState());
+            Log.connectionError("Error Code: " + e.getErrorCode());
+            throw e;
         }
     }
     
@@ -235,9 +273,50 @@ public class InfluxDBService {
      * Execute InfluxDB 3 Java API query
      */
     private String executeInfluxDB3Query(String query) throws Exception {
-        // For now, fallback to REST API
-        // TODO: Implement actual InfluxDB 3 Java API client
-        return executeRESTQuery(query);
+        // Configure SSL validation skip if needed
+        if (config.isSkipSSLValidation() && config.getProtocol() == Protocol.HTTPS) {
+            configureSSLValidationSkip();
+        }
+        
+        // Build the InfluxDB 3 API URL with query parameters (matching curl command format)
+        String urlString = buildInfluxDB3ApiUrl(query);
+        URL url = new URL(urlString);
+        
+        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        connection.setRequestMethod("GET");
+        // Use Bearer token authentication (matching curl command)
+        connection.setRequestProperty("Authorization", "Bearer " + config.getToken());
+        connection.setRequestProperty("Accept", "application/json");
+        connection.setConnectTimeout(30000);
+        connection.setReadTimeout(config.getQueryTimeout().getMilliseconds());
+        
+        int responseCode = connection.getResponseCode();
+        if (responseCode != 200) {
+            String errorMessage = connection.getResponseMessage();
+            try (BufferedReader reader = new BufferedReader(
+                    new InputStreamReader(connection.getErrorStream() != null ? 
+                        connection.getErrorStream() : connection.getInputStream(), StandardCharsets.UTF_8))) {
+                StringBuilder errorResponse = new StringBuilder();
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    errorResponse.append(line);
+                }
+                if (errorResponse.length() > 0) {
+                    errorMessage = errorResponse.toString();
+                }
+            }
+            throw new QueryExecutionException("InfluxDB 3 API error: " + responseCode + " - " + errorMessage);
+        }
+        
+        try (BufferedReader reader = new BufferedReader(
+                new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
+            StringBuilder response = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) {
+                response.append(line);
+            }
+            return response.toString();
+        }
     }
     
     /**
@@ -277,13 +356,20 @@ public class InfluxDBService {
     
     /**
      * Build Flight SQL JDBC URL
+     * Based on Apache Arrow Flight SQL JDBC Driver documentation:
+     * https://arrow.apache.org/docs/java/flight_sql_jdbc_driver.html
+     * 
+     * URI format: jdbc:arrow-flight-sql://HOSTNAME:PORT[/?param1=val1&param2=val2&...]
+     * 
+     * For HTTP (insecure): useEncryption=0
+     * For HTTPS (TLS): useEncryption=1
      */
-    private String buildFlightSQLJDBCUrl(String endpoint) {
-        StringBuilder url = new StringBuilder("jdbc:arrow-flight://");
+    private String buildFlightSQLJDBCUrl() {
+        StringBuilder url = new StringBuilder("jdbc:arrow-flight-sql://");
         
         // Parse host and port from config.getHost()
         String host = config.getHost();
-        int port = 443; // Default port for HTTPS
+        int port = 443; // Default port for HTTPS (as per InfluxDB 3 docs)
         
         if (host.contains(":")) {
             String[] parts = host.split(":");
@@ -292,24 +378,81 @@ public class InfluxDBService {
                 port = Integer.parseInt(parts[1]);
             } catch (NumberFormatException e) {
                 // Use default port if parsing fails
-                port = config.getProtocol() == Protocol.HTTPS ? 443 : 80;
+                // InfluxDB 3 typically uses 8181 for HTTP, 443 for HTTPS
+                port = config.getProtocol() == Protocol.HTTPS ? 443 : 8181;
             }
         } else {
             // No port specified, use default based on protocol
-            port = config.getProtocol() == Protocol.HTTPS ? 443 : 80;
+            // InfluxDB 3 default: 8181 for HTTP, 443 for HTTPS
+            port = config.getProtocol() == Protocol.HTTPS ? 443 : 8181;
         }
         
-        // Build the endpoint with host and port
-        String fullEndpoint = host + ":" + port;
-        if (!endpoint.isEmpty()) {
-            fullEndpoint += endpoint;
+        // Build URL: jdbc:arrow-flight-sql://HOSTNAME:PORT
+        // According to Apache Arrow docs, endpoint paths are not used in JDBC URL
+        url.append(host).append(":").append(port);
+        
+        // Add query parameters
+        // According to docs: https://arrow.apache.org/docs/java/flight_sql_jdbc_driver.html
+        // Parameters can be passed as URL query parameters
+        List<String> params = new ArrayList<>();
+        
+        // Database parameter - passed as gRPC header (any unrecognized param becomes a header)
+        params.add("database=" + config.getDatabase());
+        
+        // Configure SSL/TLS parameters based on protocol
+        // For HTTP: useEncryption=false (equivalent to Location.forGrpcInsecure)
+        // For HTTPS: useEncryption=true (equivalent to Location.forGrpcTls)
+        boolean useEncryption = config.getProtocol() == Protocol.HTTPS;
+        params.add("useEncryption=" + (useEncryption ? "1" : "0"));
+        
+        // If SSL validation should be skipped, add the appropriate parameters
+        // This is important for self-signed certificates
+        if (config.isSkipSSLValidation() && useEncryption) {
+            params.add("disableCertificateVerification=true");
+            Log.connectionInfo("Flight SQL SSL certificate verification disabled");
         }
         
-        url.append(fullEndpoint);
-        url.append("?database=").append(config.getDatabase());
-        url.append("&useEncryption=").append(config.getProtocol() == Protocol.HTTPS);
+        // Token authentication - can be passed as URL parameter or via Properties
+        // We'll pass it via Properties in getConnection(), but can also add to URL
+        // params.add("token=" + config.getToken());
+        
+        if (!params.isEmpty()) {
+            url.append("?").append(String.join("&", params));
+        }
         
         return url.toString();
+    }
+    
+    /**
+     * Build InfluxDB 3 API URL (matching curl command format)
+     */
+    private String buildInfluxDB3ApiUrl(String query) throws Exception {
+        StringBuilder url = new StringBuilder();
+        // Use HTTP by default for InfluxDB 3 (matching curl command)
+        String protocol = config.getProtocol() == Protocol.HTTPS ? "https" : "http";
+        url.append(protocol).append("://");
+        url.append(config.getHost()).append("/api/v3/query_sql");
+        
+        // Add query parameters (URL encoded)
+        String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8.toString());
+        String encodedDatabase = URLEncoder.encode(config.getDatabase(), StandardCharsets.UTF_8.toString());
+        
+        url.append("?db=").append(encodedDatabase);
+        url.append("&q=").append(encodedQuery);
+        
+        return url.toString();
+    }
+    
+    /**
+     * Escape JSON string
+     */
+    private String escapeJson(String str) {
+        if (str == null) return "null";
+        return str.replace("\\", "\\\\")
+                 .replace("\"", "\\\"")
+                 .replace("\n", "\\n")
+                 .replace("\r", "\\r")
+                 .replace("\t", "\\t");
     }
     
     /**
@@ -439,6 +582,17 @@ public class InfluxDBService {
                    .replace("\n", "\\n")
                    .replace("\r", "\\r")
                    .replace("\t", "\\t");
+    }
+    
+    /**
+     * Get list of available JDBC drivers for debugging
+     */
+    private String getAvailableDrivers() {
+        List<String> drivers = new ArrayList<>();
+        DriverManager.drivers().forEach(driver -> {
+            drivers.add(driver.getClass().getName());
+        });
+        return drivers.isEmpty() ? "No drivers found" : String.join(", ", drivers);
     }
     
     /**
