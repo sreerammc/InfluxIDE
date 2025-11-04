@@ -221,8 +221,8 @@ public class InfluxDBService {
      * Test REST API connection
      */
     private boolean testRESTConnection() throws Exception {
-        // For InfluxDB 3.0, use SHOW TABLES (SQL syntax)
-        String testQuery = "SHOW TABLES";
+        // REST API uses InfluxQL syntax: SHOW MEASUREMENTS (not SHOW TABLES)
+        String testQuery = "SHOW MEASUREMENTS";
         try {
             String result = executeRESTQuery(testQuery);
             return result != null && !result.contains("error");
@@ -418,13 +418,14 @@ public class InfluxDBService {
     }
     
     /**
-     * Execute REST API query for InfluxDB 3.0 Core, Enterprise, and Clustered
-     * Uses /api/v3/query_sql endpoint with Bearer token authentication
+     * Execute REST API query for InfluxDB 1.x, 2.x, 3.0 Core, Enterprise, and Clustered
+     * Uses /query endpoint with token parameter (p=token)
      */
     private String executeRESTQuery(String query) throws Exception {
-        // Configure SSL validation skip if needed
+        // Configure SSL validation skip if needed (must be done before opening connection)
         if (config.isSkipSSLValidation() && config.getProtocol() == Protocol.HTTPS) {
             configureSSLValidationSkip();
+            Log.connectionInfo("REST API SSL certificate validation disabled");
         }
         
         // Build the REST API URL
@@ -433,10 +434,33 @@ public class InfluxDBService {
         
         Log.connectionInfo("REST API URL: " + urlString);
         
+        // Open connection - for HTTPS URLs, this will return HttpsURLConnection
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
+        
+        // If it's an HTTPS connection, explicitly set SSL socket factory and hostname verifier
+        // This ensures SSL validation skip works even if default wasn't set properly
+        if (config.getProtocol() == Protocol.HTTPS && connection instanceof HttpsURLConnection) {
+            HttpsURLConnection httpsConnection = (HttpsURLConnection) connection;
+            if (config.isSkipSSLValidation()) {
+                // Create trust manager that accepts all certificates
+                TrustManager[] trustAllCerts = new TrustManager[] {
+                    new X509TrustManager() {
+                        public X509Certificate[] getAcceptedIssuers() { return null; }
+                        public void checkClientTrusted(X509Certificate[] certs, String authType) {}
+                        public void checkServerTrusted(X509Certificate[] certs, String authType) {}
+                    }
+                };
+                SSLContext sslContext = SSLContext.getInstance("TLS");
+                sslContext.init(null, trustAllCerts, new SecureRandom());
+                httpsConnection.setSSLSocketFactory(sslContext.getSocketFactory());
+                httpsConnection.setHostnameVerifier((hostname, session) -> true);
+                Log.connectionInfo("REST API: SSL validation explicitly disabled for this connection");
+            }
+        }
+        
         connection.setRequestMethod("GET");
-        // Use Bearer token authentication for InfluxDB 3.0
-        connection.setRequestProperty("Authorization", "Bearer " + config.getToken());
+        // Token is passed as 'p' parameter in URL, not as Bearer header
+        // This matches the curl command format: --data-urlencode "p=token"
         connection.setRequestProperty("Accept", "application/json");
         connection.setConnectTimeout(30000);
         connection.setReadTimeout(config.getQueryTimeout().getMilliseconds());
@@ -625,22 +649,26 @@ public class InfluxDBService {
     }
     
     /**
-     * Build REST API URL for InfluxDB 3.0 Core, Enterprise, and Clustered
-     * Uses /api/v3/query_sql endpoint for InfluxDB 3.0
+     * Build REST API URL for InfluxDB
+     * Uses /query endpoint (compatible with InfluxDB 1.x, 2.x, and 3.x)
+     * Matches curl format: --get "https://host/query" --data-urlencode "p=token" --data-urlencode "db=database" --data-urlencode "q=query"
      */
     private String buildRESTUrl(String query) throws Exception {
         StringBuilder url = new StringBuilder();
         String protocol = config.getProtocol() == Protocol.HTTPS ? "https" : "http";
         url.append(protocol).append("://");
         
-        // For InfluxDB 3.0, use /api/v3/query_sql endpoint
-        url.append(config.getHost()).append("/api/v3/query_sql");
+        // Use /query endpoint (standard InfluxDB REST API endpoint)
+        url.append(config.getHost()).append("/query");
         
-        // Add query parameters (URL encoded)
+        // Add query parameters (URL encoded) - matching curl command format
         String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8.toString());
         String encodedDatabase = URLEncoder.encode(config.getDatabase(), StandardCharsets.UTF_8.toString());
+        String encodedToken = URLEncoder.encode(config.getToken(), StandardCharsets.UTF_8.toString());
         
-        url.append("?db=").append(encodedDatabase);
+        // Parameters: p=token, db=database, q=query (matching curl --data-urlencode format)
+        url.append("?p=").append(encodedToken);
+        url.append("&db=").append(encodedDatabase);
         url.append("&q=").append(encodedQuery);
         
         return url.toString();
@@ -777,6 +805,7 @@ public class InfluxDBService {
     /**
      * Configure SSL validation skip for self-signed certificates
      * This method sets up a trust manager that accepts all certificates
+     * Works for HttpsURLConnection, Apache Arrow Flight (Netty), and InfluxDB 3 Java client
      */
     private void configureSSLValidationSkip() {
         try {
@@ -803,19 +832,27 @@ public class InfluxDBService {
             SSLContext sslContext = SSLContext.getInstance("TLS");
             sslContext.init(null, trustAllCerts, new SecureRandom());
             
-            // Set the default SSL socket factory
+            // Set the default SSL socket factory (for HttpsURLConnection)
             HttpsURLConnection.setDefaultSSLSocketFactory(sslContext.getSocketFactory());
             
             // Create a hostname verifier that accepts all hostnames
             HostnameVerifier allHostsValid = (hostname, session) -> true;
             HttpsURLConnection.setDefaultHostnameVerifier(allHostsValid);
             
+            // IMPORTANT: Set as default SSL context for JVM
+            // This affects ALL SSL connections including Netty/Arrow Flight used by InfluxDB 3 Java client
+            SSLContext.setDefault(sslContext);
+            
             // Set system properties for additional SSL bypass
             System.setProperty("https.protocols", "TLSv1.2,TLSv1.3");
             System.setProperty("com.sun.net.ssl.checkRevocation", "false");
             System.setProperty("com.sun.security.ssl.allowUnsafeRenegotiation", "true");
             
-            Log.connectionInfo("SSL validation skip configured successfully");
+            // For Netty/Arrow Flight SSL connections
+            System.setProperty("io.netty.handler.ssl.openssl.useOpenSsl", "true");
+            System.setProperty("io.netty.handler.ssl.defaultTrustManager", "false");
+            
+            Log.connectionInfo("SSL validation skip configured successfully for all SSL connections");
             
         } catch (Exception e) {
             Log.connectionError("Failed to configure SSL validation skip: " + e.getMessage());

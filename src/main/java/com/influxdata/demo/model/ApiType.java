@@ -8,7 +8,7 @@ public enum ApiType {
     
     FLIGHT_SQL("Flight SQL", "Best performance with JDBC driver and Apache Arrow. Works with InfluxDB 3.0 Core, Enterprise, and Clustered. Uses jdbc:arrow-flight-sql:// protocol."),
     INFLUXDB_3_API("InfluxDB 3 Java API", "Official InfluxDB 3 Java client library. Works with InfluxDB 3.0 Core, Enterprise, and Clustered. Uses com.influxdb.v3.client.InfluxDBClient."),
-    REST_API("REST API", "HTTP REST API for querying. Works with InfluxDB 3.0 Core, Enterprise, and Clustered using /api/v3/query_sql endpoint.");
+    REST_API("REST API", "HTTP REST API for querying. Works with InfluxDB 1.x, 2.x, 3.0 Core, Enterprise, and Clustered using /query endpoint with token parameter.");
     
     private final String displayName;
     private final String description;
