@@ -22,6 +22,11 @@ import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.stream.Stream;
+import java.util.stream.Collectors;
+
+// InfluxDB 3 Java Client
+import com.influxdb.v3.client.InfluxDBClient;
 
 // SSL imports
 import javax.net.ssl.*;
@@ -159,6 +164,10 @@ public class InfluxDBService {
             long duration = System.currentTimeMillis() - startTime;
             Log.queryError("Query execution failed after " + duration + "ms: " + e.getMessage());
             Log.logException("query", "Query execution error", e);
+            
+            // Print server error details to console
+            printServerErrorToConsole(e, query);
+            
             throw new QueryExecutionException("Query execution failed", e);
         }
     }
@@ -212,9 +221,15 @@ public class InfluxDBService {
      * Test REST API connection
      */
     private boolean testRESTConnection() throws Exception {
-        String testQuery = "SHOW MEASUREMENTS";
-        String result = executeRESTQuery(testQuery);
-        return result != null && !result.contains("error");
+        // For InfluxDB 3.0, use SHOW TABLES (SQL syntax)
+        String testQuery = "SHOW TABLES";
+        try {
+            String result = executeRESTQuery(testQuery);
+            return result != null && !result.contains("error");
+        } catch (Exception e) {
+            Log.connectionError("REST API connection test failed: " + e.getMessage());
+            throw new ConnectionException("REST API connection test failed", e);
+        }
     }
     
     /**
@@ -265,26 +280,162 @@ public class InfluxDBService {
             Log.connectionError("Flight SQL connection failed: " + e.getMessage());
             Log.connectionError("SQL State: " + e.getSQLState());
             Log.connectionError("Error Code: " + e.getErrorCode());
+            
+            // Print server error to console
+            System.err.println("=== Flight SQL Server Error ===");
+            System.err.println("SQL State: " + e.getSQLState());
+            System.err.println("Error Code: " + e.getErrorCode());
+            System.err.println("Error Message: " + e.getMessage());
+            if (e.getCause() != null) {
+                System.err.println("Cause: " + e.getCause().getMessage());
+            }
+            System.err.println("=================================");
+            
             throw e;
         }
     }
     
     /**
-     * Execute InfluxDB 3 Java API query
+     * Execute InfluxDB 3 Java API query using the official client library
+     * Documentation: https://docs.influxdata.com/influxdb3/clustered/reference/client-libraries/v3/java/
      */
     private String executeInfluxDB3Query(String query) throws Exception {
+        // Build host URL (ensure protocol is included)
+        String hostUrl = config.getHost();
+        if (!hostUrl.startsWith("http://") && !hostUrl.startsWith("https://")) {
+            hostUrl = (config.getProtocol() == Protocol.HTTPS ? "https://" : "http://") + hostUrl;
+        }
+        
+        Log.connectionInfo("Connecting to InfluxDB 3 Clustered at: " + hostUrl);
+        Log.connectionInfo("Database: " + config.getDatabase());
+        
+        // Configure SSL validation skip if needed (for client library)
+        if (config.isSkipSSLValidation() && config.getProtocol() == Protocol.HTTPS) {
+            configureSSLValidationSkip();
+            Log.connectionInfo("SSL certificate validation is disabled");
+        }
+        
+        // Convert token string to char array (required by InfluxDBClient)
+        char[] tokenArray = config.getToken().toCharArray();
+        
+        InfluxDBClient client = null;
+        try {
+            // Initialize InfluxDB 3 client
+            // According to docs: InfluxDBClient.getInstance(host, token, database)
+            Log.connectionInfo("Initializing InfluxDB 3 Java client...");
+            client = InfluxDBClient.getInstance(hostUrl, tokenArray, config.getDatabase());
+            Log.connectionInfo("InfluxDB 3 Java client initialized successfully");
+            
+            // Execute query - returns Stream<Object[]>
+            Log.queryInfo("Executing query: " + query.substring(0, Math.min(query.length(), 100)) + (query.length() > 100 ? "..." : ""));
+            Stream<Object[]> resultStream = client.query(query);
+            
+            // Convert Stream<Object[]> to JSON format
+            // First, collect column names from first row (if available)
+            List<Object[]> rows = resultStream.collect(Collectors.toList());
+            
+            if (rows.isEmpty()) {
+                Log.queryInfo("Query returned no results");
+                return "[]";
+            }
+            
+            // Build JSON array from results
+            // Note: We need to determine column names - for now, use generic column names
+            // The actual column names would come from the query result metadata
+            StringBuilder json = new StringBuilder("[");
+            boolean first = true;
+            
+            for (Object[] row : rows) {
+                if (!first) {
+                    json.append(",");
+                }
+                first = false;
+                
+                json.append("{");
+                for (int i = 0; i < row.length; i++) {
+                    if (i > 0) {
+                        json.append(",");
+                    }
+                    json.append("\"column").append(i).append("\":");
+                    
+                    Object value = row[i];
+                    if (value == null) {
+                        json.append("null");
+                    } else if (value instanceof String) {
+                        json.append("\"").append(escapeJson(value.toString())).append("\"");
+                    } else if (value instanceof Number || value instanceof Boolean) {
+                        json.append(value);
+                    } else {
+                        json.append("\"").append(escapeJson(value.toString())).append("\"");
+                    }
+                }
+                json.append("}");
+            }
+            json.append("]");
+            
+            Log.queryInfo("Query executed successfully, returned " + rows.size() + " rows");
+            return json.toString();
+            
+        } catch (Exception e) {
+            // Log detailed error information
+            Log.connectionError("InfluxDB 3 Java API query failed: " + e.getMessage());
+            Log.connectionError("Error class: " + e.getClass().getName());
+            
+            // Print stack trace to console for debugging
+            System.err.println("=== InfluxDB 3 Java API Error ===");
+            System.err.println("Host: " + hostUrl);
+            System.err.println("Database: " + config.getDatabase());
+            System.err.println("Query: " + query);
+            System.err.println("Error: " + e.getMessage());
+            System.err.println("Error Type: " + e.getClass().getName());
+            e.printStackTrace(System.err);
+            System.err.println("===================================");
+            
+            // Check for specific error types
+            if (e.getMessage() != null) {
+                String errorMsg = e.getMessage().toLowerCase();
+                if (errorMsg.contains("connection") || errorMsg.contains("connect")) {
+                    throw new ConnectionException("Failed to connect to InfluxDB 3 cluster: " + e.getMessage(), e);
+                } else if (errorMsg.contains("authentication") || errorMsg.contains("token") || errorMsg.contains("unauthorized")) {
+                    throw new ConnectionException("Authentication failed. Please check your token.", e);
+                } else if (errorMsg.contains("database") || errorMsg.contains("not found")) {
+                    throw new ConnectionException("Database not found: " + config.getDatabase(), e);
+                }
+            }
+            
+            throw new QueryExecutionException("InfluxDB 3 Java API query failed: " + e.getMessage(), e);
+        } finally {
+            // Close client if it was created
+            if (client != null) {
+                try {
+                    client.close();
+                    Log.connectionInfo("InfluxDB 3 Java client closed");
+                } catch (Exception e) {
+                    Log.connectionError("Error closing InfluxDB 3 client: " + e.getMessage());
+                }
+            }
+        }
+    }
+    
+    /**
+     * Execute REST API query for InfluxDB 3.0 Core, Enterprise, and Clustered
+     * Uses /api/v3/query_sql endpoint with Bearer token authentication
+     */
+    private String executeRESTQuery(String query) throws Exception {
         // Configure SSL validation skip if needed
         if (config.isSkipSSLValidation() && config.getProtocol() == Protocol.HTTPS) {
             configureSSLValidationSkip();
         }
         
-        // Build the InfluxDB 3 API URL with query parameters (matching curl command format)
-        String urlString = buildInfluxDB3ApiUrl(query);
+        // Build the REST API URL
+        String urlString = buildRESTUrl(query);
         URL url = new URL(urlString);
+        
+        Log.connectionInfo("REST API URL: " + urlString);
         
         HttpURLConnection connection = (HttpURLConnection) url.openConnection();
         connection.setRequestMethod("GET");
-        // Use Bearer token authentication (matching curl command)
+        // Use Bearer token authentication for InfluxDB 3.0
         connection.setRequestProperty("Authorization", "Bearer " + config.getToken());
         connection.setRequestProperty("Accept", "application/json");
         connection.setConnectTimeout(30000);
@@ -305,7 +456,15 @@ public class InfluxDBService {
                     errorMessage = errorResponse.toString();
                 }
             }
-            throw new QueryExecutionException("InfluxDB 3 API error: " + responseCode + " - " + errorMessage);
+            
+            // Log detailed error to console
+            System.err.println("=== REST API Error ===");
+            System.err.println("URL: " + urlString);
+            System.err.println("Response Code: " + responseCode);
+            System.err.println("Error: " + errorMessage);
+            System.err.println("======================");
+            
+            throw new QueryExecutionException("REST API error: " + responseCode + " - " + errorMessage);
         }
         
         try (BufferedReader reader = new BufferedReader(
@@ -315,41 +474,7 @@ public class InfluxDBService {
             while ((line = reader.readLine()) != null) {
                 response.append(line);
             }
-            return response.toString();
-        }
-    }
-    
-    /**
-     * Execute REST API query
-     */
-    private String executeRESTQuery(String query) throws Exception {
-        String urlString = buildRESTUrl(query);
-        URL url = new URL(urlString);
-        
-        // Configure SSL if needed
-        if (config.isSkipSSLValidation() && config.getProtocol() == Protocol.HTTPS) {
-            configureSSLValidationSkip();
-        }
-        
-        HttpURLConnection connection = (HttpURLConnection) url.openConnection();
-        connection.setRequestMethod("GET");
-        connection.setRequestProperty("Authorization", "Token " + config.getToken());
-        connection.setRequestProperty("Accept", "application/json");
-        connection.setConnectTimeout(30000);
-        connection.setReadTimeout(config.getQueryTimeout().getMilliseconds());
-        
-        int responseCode = connection.getResponseCode();
-        if (responseCode != 200) {
-            throw new QueryExecutionException("HTTP error: " + responseCode + " - " + connection.getResponseMessage());
-        }
-        
-        try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(connection.getInputStream(), StandardCharsets.UTF_8))) {
-            StringBuilder response = new StringBuilder();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                response.append(line);
-            }
+            Log.queryInfo("REST API query executed successfully");
             return response.toString();
         }
     }
@@ -444,6 +569,50 @@ public class InfluxDBService {
     }
     
     /**
+     * Print server error details to console for debugging
+     */
+    private void printServerErrorToConsole(Exception e, String query) {
+        System.err.println("==========================================");
+        System.err.println("QUERY ERROR - Server Response Details");
+        System.err.println("==========================================");
+        System.err.println("API Type: " + config.getApiType());
+        System.err.println("Host: " + config.getHost());
+        System.err.println("Database: " + config.getDatabase());
+        System.err.println("Query: " + (query != null ? query.substring(0, Math.min(query.length(), 200)) : "null") + (query != null && query.length() > 200 ? "..." : ""));
+        System.err.println("Error Type: " + e.getClass().getName());
+        System.err.println("Error Message: " + e.getMessage());
+        
+        // Extract server error message if available
+        Throwable cause = e.getCause();
+        if (cause != null) {
+            System.err.println("Cause: " + cause.getClass().getName() + " - " + cause.getMessage());
+            if (cause.getCause() != null) {
+                System.err.println("Root Cause: " + cause.getCause().getMessage());
+            }
+        }
+        
+        // For SQLException, show SQL state and error code
+        if (e instanceof SQLException) {
+            SQLException sqlEx = (SQLException) e;
+            System.err.println("SQL State: " + sqlEx.getSQLState());
+            System.err.println("Error Code: " + sqlEx.getErrorCode());
+        }
+        
+        // Print stack trace for debugging
+        System.err.println("--- Stack Trace ---");
+        e.printStackTrace(System.err);
+        
+        // Show log directory location
+        String logDir = Log.getLogDirectory();
+        System.err.println("==========================================");
+        System.err.println("Log files are saved to: " + logDir);
+        System.err.println("  - errors.log: All errors");
+        System.err.println("  - queries.log: Query execution logs");
+        System.err.println("  - influxdb-ide.log: Application logs");
+        System.err.println("==========================================");
+    }
+    
+    /**
      * Escape JSON string
      */
     private String escapeJson(String str) {
@@ -456,19 +625,22 @@ public class InfluxDBService {
     }
     
     /**
-     * Build REST API URL
+     * Build REST API URL for InfluxDB 3.0 Core, Enterprise, and Clustered
+     * Uses /api/v3/query_sql endpoint for InfluxDB 3.0
      */
     private String buildRESTUrl(String query) throws Exception {
         StringBuilder url = new StringBuilder();
-        url.append(config.getProtocol().getValue()).append("://");
-        url.append(config.getHost()).append("/query");
+        String protocol = config.getProtocol() == Protocol.HTTPS ? "https" : "http";
+        url.append(protocol).append("://");
         
+        // For InfluxDB 3.0, use /api/v3/query_sql endpoint
+        url.append(config.getHost()).append("/api/v3/query_sql");
+        
+        // Add query parameters (URL encoded)
         String encodedQuery = URLEncoder.encode(query, StandardCharsets.UTF_8.toString());
-        String encodedToken = URLEncoder.encode(config.getToken(), StandardCharsets.UTF_8.toString());
         String encodedDatabase = URLEncoder.encode(config.getDatabase(), StandardCharsets.UTF_8.toString());
         
-        url.append("?p=").append(encodedToken);
-        url.append("&db=").append(encodedDatabase);
+        url.append("?db=").append(encodedDatabase);
         url.append("&q=").append(encodedQuery);
         
         return url.toString();

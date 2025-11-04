@@ -8,7 +8,11 @@ echo.
 
 REM Build the project with all latest fixes
 echo [1/3] Building project with latest fixes...
-call mvn clean package -DskipTests
+REM Try to delete target manually first (in case of locked files)
+if exist target (
+    rmdir /s /q target 2>nul
+)
+call mvn package -DskipTests
 if %errorlevel% neq 0 (
     echo ERROR: Build failed!
     pause
