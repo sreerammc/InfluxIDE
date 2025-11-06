@@ -514,7 +514,7 @@ public class ResultsPanel {
                     column.setPrefWidth(150);
                     column.setResizable(true);
                     
-                    // Add tooltips to cells and timestamp formatting
+                    // Add tooltips to cells - display raw data without any conversion
                     column.setCellFactory(col -> new TableCell<Map<String, Object>, Object>() {
                         @Override
                         protected void updateItem(Object item, boolean empty) {
@@ -523,14 +523,8 @@ public class ResultsPanel {
                                 setText(null);
                                 setTooltip(null);
                             } else {
-                                String cellText;
-                                
-                                // Apply timestamp formatting if this is a timestamp column
-                                if (isTimestampColumn(columnName)) {
-                                    cellText = formatTimestamp(item, timestampFormat);
-                                } else {
-                                    cellText = item.toString();
-                                }
+                                // Display raw value as-is without any conversion or formatting
+                                String cellText = item.toString();
                                 
                                 setText(cellText);
                                 

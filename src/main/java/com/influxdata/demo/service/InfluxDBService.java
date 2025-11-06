@@ -224,8 +224,8 @@ public class InfluxDBService {
         // REST API uses InfluxQL syntax: SHOW MEASUREMENTS (not SHOW TABLES)
         String testQuery = "SHOW MEASUREMENTS";
         try {
-            String result = executeRESTQuery(testQuery);
-            return result != null && !result.contains("error");
+        String result = executeRESTQuery(testQuery);
+        return result != null && !result.contains("error");
         } catch (Exception e) {
             Log.connectionError("REST API connection test failed: " + e.getMessage());
             throw new ConnectionException("REST API connection test failed", e);
@@ -711,14 +711,7 @@ public class InfluxDBService {
                 String columnName = metaData.getColumnName(i);
                 Object value = resultSet.getObject(i);
                 
-                // Handle timestamp conversion
-                if (timezoneService.isTimestampColumn(columnName) && config.isTimezoneConversion()) {
-                    if (value instanceof Timestamp) {
-                        value = timezoneService.convertToTimezone((Timestamp) value, 
-                            timezoneService.getSelectedTimezone(config.getSelectedTimezone()));
-                    }
-                }
-                
+                // Store raw value without any conversion
                 row.put(columnName, value);
             }
             
